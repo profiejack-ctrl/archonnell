@@ -83,6 +83,7 @@ export async function checkDatabaseHealth() {
         result.primary.status = 'down';
         result.primary.error = err.message;
         result.activeSource = 'backup';
+        console.error('[DB Primary Error]:', err.message);
     }
     // Test Backup if configured
     if (backupPool) {

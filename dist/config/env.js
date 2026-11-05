@@ -46,3 +46,16 @@ export const env = parsedEnv.success ? parsedEnv.data : {
     SMTP_FROM_NAME: process.env.SMTP_FROM_NAME || 'Archon Nell Incorporated',
     OTP_EXPIRATION_MINUTES: 5
 };
+if (process.env.VERCEL) {
+    const dbUrl = env.DATABASE_URL || '';
+    if (!dbUrl || dbUrl.includes('127.0.0.1') || dbUrl.includes('localhost')) {
+        console.warn('[Vercel Runtime] ⚠️ DATABASE_URL is either missing or pointing to localhost. Cloud databases (Supabase, Neon, Render, Railway) must be configured in Vercel Project Settings > Environment Variables.');
+    }
+    else {
+        try {
+            const parsedUrl = new URL(dbUrl);
+            console.log(`[Vercel Runtime] 📡 Cloud database configured: ${parsedUrl.hostname}`);
+        }
+        catch { }
+    }
+}
