@@ -1,12 +1,14 @@
 import pg from 'pg';
 import { env } from '../config/env.js';
 const { Pool } = pg;
+const isLocalhost = env.DATABASE_URL.includes('localhost') || env.DATABASE_URL.includes('127.0.0.1');
+const primarySslConfig = isLocalhost ? undefined : { rejectUnauthorized: false };
 export const primaryPool = new Pool({
     connectionString: env.DATABASE_URL,
-    max: 20,
+    max: process.env.VERCEL ? 3 : 20,
     idleTimeoutMillis: 30000,
     connectionTimeoutMillis: 5000,
-    ssl: env.DATABASE_URL.includes('supabase.co') ? { rejectUnauthorized: false } : undefined
+    ssl: primarySslConfig
 });
 export const backupPool = env.DATABASE_BACKUP_URL
     ? new Pool({

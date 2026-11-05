@@ -25,8 +25,27 @@ app.get('/health', async (req, res) => {
         database: dbHealth
     });
 });
+// CDN-hosted assets for Serverless compatibility (prevents ENOENT in Vercel/Lambda)
+const SWAGGER_CSS_URL = 'https://cdnjs.cloudflare.com/ajax/libs/swagger-ui/5.11.0/swagger-ui.min.css';
+const SWAGGER_JS_URLS = [
+    'https://cdnjs.cloudflare.com/ajax/libs/swagger-ui/5.11.0/swagger-ui-bundle.js',
+    'https://cdnjs.cloudflare.com/ajax/libs/swagger-ui/5.11.0/swagger-ui-standalone-preset.js'
+];
+// Root Welcome Endpoint
+app.get('/', (req, res) => {
+    res.json({
+        service: 'Archon Nell Central Backend Gateway',
+        status: 'online',
+        version: '1.0.0',
+        documentation: '/docs',
+        health: '/health',
+        timestamp: new Date().toISOString()
+    });
+});
 // Interactive Swagger UI API Documentation
 app.use('/api/docs', swaggerUi.serve, swaggerUi.setup(swaggerDocument, {
+    customCssUrl: SWAGGER_CSS_URL,
+    customJs: SWAGGER_JS_URLS,
     customSiteTitle: 'Archon Nell - API Documentation',
     customCss: '.swagger-ui .topbar { display: none }',
     swaggerOptions: {
@@ -53,3 +72,4 @@ app.use((req, res) => {
 });
 // Central Error Handler
 app.use(errorHandler);
+export default app;
