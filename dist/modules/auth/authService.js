@@ -17,10 +17,17 @@ export async function loginUser(email, passwordPlain) {
     if (!isPasswordMatch) {
         throw { statusCode: 401, code: 'INVALID_CREDENTIALS', message: 'Invalid email or password.' };
     }
+    const nameParts = (user.full_name || 'Admin User').trim().split(' ');
+    const firstName = nameParts[0] || 'User';
+    const lastName = nameParts.slice(1).join(' ') || '';
     const payload = {
         id: user.id,
         email: user.email,
         full_name: user.full_name,
+        firstName,
+        lastName,
+        name: user.full_name,
+        role: user.global_role,
         global_role: user.global_role
     };
     const token = jwt.sign(payload, env.JWT_SECRET, { expiresIn: '7d' });

@@ -6,4 +6,7 @@ router.post('/login', authController.login);
 router.post('/register', authController.register);
 router.post('/logout', authController.logout);
 router.get('/me', authenticate, authController.me);
+// Universal OTP verification routes for all subsystems
+router.post('/otp/send', authController.sendOtp);
+router.post('/otp/verify', authController.verifyOtp);
 export default router;

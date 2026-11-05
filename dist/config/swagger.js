@@ -122,6 +122,67 @@ This centralized API integrates all capstone subsystems into a unified platform:
                 }
             }
         },
+        '/auth/otp/send': {
+            post: {
+                tags: ['Auth'],
+                summary: 'Generate and send a single-use 6-digit OTP code to an email address for any subsystem',
+                requestBody: {
+                    required: true,
+                    content: {
+                        'application/json': {
+                            schema: {
+                                type: 'object',
+                                required: ['email'],
+                                properties: {
+                                    email: { type: 'string', example: 'user@example.com' },
+                                    purpose: {
+                                        type: 'string',
+                                        example: 'CHECKOUT',
+                                        description: 'Reason for OTP: LOGIN, CHECKOUT, PASSWORD_RESET, APPLICANT, DRIVER, WFM_CLOCK, PAYROLL_ACCESS'
+                                    },
+                                    module: {
+                                        type: 'string',
+                                        example: 'shop',
+                                        description: 'Subsystem: auth, shop, hrms, wfm, payroll, fleet'
+                                    }
+                                }
+                            }
+                        }
+                    }
+                },
+                responses: {
+                    200: { description: 'OTP generated and dispatched successfully.' },
+                    400: { description: 'Invalid email or validation error.' }
+                }
+            }
+        },
+        '/auth/otp/verify': {
+            post: {
+                tags: ['Auth'],
+                summary: 'Validate a 6-digit OTP code for a given email and purpose',
+                requestBody: {
+                    required: true,
+                    content: {
+                        'application/json': {
+                            schema: {
+                                type: 'object',
+                                required: ['email', 'code'],
+                                properties: {
+                                    email: { type: 'string', example: 'user@example.com' },
+                                    code: { type: 'string', example: '123456' },
+                                    purpose: { type: 'string', example: 'CHECKOUT' },
+                                    module: { type: 'string', example: 'shop' }
+                                }
+                            }
+                        }
+                    }
+                },
+                responses: {
+                    200: { description: 'OTP validated successfully.' },
+                    400: { description: 'Invalid or expired OTP.' }
+                }
+            }
+        },
         // HRMS
         '/hrms/departments': {
             get: {

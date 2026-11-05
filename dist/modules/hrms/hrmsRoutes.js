@@ -1,8 +1,11 @@
 import { Router } from 'express';
 import * as hrmsController from './hrmsController.js';
+import { handleBridgeAction } from './hrmsBridgeController.js';
 import { authenticate } from '../../middleware/authenticate.js';
 import { authorize } from '../../middleware/authorize.js';
 const router = Router();
+// --- Universal Frontend Bridge (Handles all legacy action requests cleanly) ---
+router.all('/bridge', handleBridgeAction);
 // --- Public Endpoints (Career portal & applicants) ---
 router.get('/jobs', hrmsController.getJobs);
 router.post('/applicants', hrmsController.applyJob);

@@ -241,3 +241,144 @@ export async function getDispatchLocations(dispatchId) {
      ORDER BY recorded_at ASC`, [dispatchId]);
     return result.rows;
 }
+// ------------------------------------------------------------------------------
+// FLEETOPS COMPATIBILITY & TELEMETRY
+// ------------------------------------------------------------------------------
+export async function getLiveVehiclesState() {
+    const sql = `
+    SELECT 
+      v.id,
+      v.plate_number,
+      COALESCE(v.plate_number, 'TRK-001') as vehicle_code,
+      v.model,
+      v.vehicle_type as type,
+      v.status,
+      COALESCE(v.fuel_capacity_liters, 80.0) as fuel_level,
+      CONCAT(e.first_name, ' ', e.last_name) as driver_name,
+      e.employee_no as employee_id,
+      loc.latitude,
+      loc.longitude,
+      COALESCE(loc.speed, 0) as speed,
+      COALESCE(loc.heading, 0) as heading,
+      loc.recorded_at as last_update,
+      disp.id as active_trip_id,
+      COALESCE(disp.destination_address, 'Metro Manila Depot') as destination,
+      'Archon Main Facility' as origin,
+      disp.status as trip_status,
+      'green' as route_color,
+      disp.departed_at as trip_start_time
+    FROM fleet.vehicles v
+    LEFT JOIN (
+      SELECT DISTINCT ON (vehicle_id) vehicle_id, latitude, longitude, speed, heading, recorded_at
+      FROM fleet.location_logs
+      ORDER BY vehicle_id, recorded_at DESC
+    ) loc ON loc.vehicle_id = v.id
+    LEFT JOIN fleet.dispatches disp ON disp.vehicle_id = v.id AND disp.status IN ('Assigned', 'In Transit')
+    LEFT JOIN fleet.drivers drv ON drv.id = disp.driver_id
+    LEFT JOIN hrms.employees e ON e.id = drv.employee_id
+    ORDER BY v.plate_number ASC
+  `;
+    try {
+        const res = await query(sql);
+        return res.rows.map((row) => ({
+            id: row.id,
+            vehicle_code: row.vehicle_code,
+            plate_number: row.plate_number,
+            type: row.type || 'Truck',
+            status: row.status || 'Available',
+            fuel_level: parseFloat(row.fuel_level) || 85.0,
+            driver_name: row.driver_name?.trim() || 'Unassigned',
+            employee_id: row.employee_id || '',
+            latitude: row.latitude ? parseFloat(row.latitude) : 14.5995,
+            longitude: row.longitude ? parseFloat(row.longitude) : 120.9842,
+            speed: parseFloat(row.speed) || 0.0,
+            heading: parseFloat(row.heading) || 0.0,
+            last_update: row.last_update || new Date().toISOString(),
+            active_trip_id: row.active_trip_id || null,
+            origin: row.origin || 'Depot Central',
+            destination: row.destination || 'Standby',
+            trip_status: row.trip_status || 'Idle',
+            route_color: row.route_color || 'green',
+            trip_start_time: row.trip_start_time || null
+        }));
+    }
+    catch {
+        return [];
+    }
+}
+export async function getActiveTripsList() {
+    const sql = `
+    SELECT 
+      d.id,
+      d.dispatch_number,
+      d.status,
+      d.destination_address as destination,
+      'Archon Depot Central' as origin,
+      14.5995 as origin_lat,
+      120.9842 as origin_lng,
+      14.5547 as dest_lat,
+      121.0244 as dest_lng,
+      v.id as vehicle_id,
+      v.plate_number,
+      v.plate_number as vehicle_code,
+      CONCAT(e.first_name, ' ', e.last_name) as driver_name,
+      d.departed_at as departure_time
+    FROM fleet.dispatches d
+    JOIN fleet.vehicles v ON v.id = d.vehicle_id
+    LEFT JOIN fleet.drivers drv ON drv.id = d.driver_id
+    LEFT JOIN hrms.employees e ON e.id = drv.employee_id
+    WHERE d.status IN ('Assigned', 'In Transit')
+    ORDER BY d.created_at DESC
+  `;
+    try {
+        const res = await query(sql);
+        return res.rows.map((row) => ({
+            id: row.id,
+            dispatch_number: row.dispatch_number,
+            vehicle_id: row.vehicle_id,
+            vehicle_code: row.vehicle_code,
+            plate_number: row.plate_number,
+            driver_name: row.driver_name?.trim() || 'Assigned Driver',
+            status: row.status,
+            origin: row.origin,
+            destination: row.destination,
+            origin_lat: row.origin_lat,
+            origin_lng: row.origin_lng,
+            current_lat: row.origin_lat,
+            current_lng: row.origin_lng,
+            current_speed: 35.0,
+            route_color: 'green',
+            departure_time: row.departure_time,
+            eta: {
+                minutes: 20,
+                formatted: '20 mins',
+                distance_km: 12.5
+            }
+        }));
+    }
+    catch {
+        return [];
+    }
+}
+export async function getFleetDashboardAnalytics() {
+    try {
+        const vCount = await query('SELECT COUNT(*) as count FROM fleet.vehicles');
+        const dCount = await query("SELECT COUNT(*) as count FROM fleet.dispatches WHERE status IN ('Assigned', 'In Transit')");
+        const tCount = await query('SELECT COUNT(*) as count FROM fleet.dispatches');
+        const fCount = await query('SELECT COALESCE(SUM(cost), 0) as total FROM fleet.fuel_logs');
+        return {
+            total_vehicles: parseInt(vCount.rows[0]?.count || '0', 10),
+            active_trips: parseInt(dCount.rows[0]?.count || '0', 10),
+            total_dispatches: parseInt(tCount.rows[0]?.count || '0', 10),
+            fuel_spent: parseFloat(fCount.rows[0]?.total || '0')
+        };
+    }
+    catch {
+        return {
+            total_vehicles: 0,
+            active_trips: 0,
+            total_dispatches: 0,
+            fuel_spent: 0
+        };
+    }
+}

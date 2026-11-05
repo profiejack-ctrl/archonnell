@@ -10,7 +10,7 @@ export const corsMiddleware = cors({
         if (allowedOriginsList.includes(origin)) {
             return callback(null, true);
         }
-        // Check wildcard subdomain matching for *.archonnell.com
+        // Check wildcard subdomain matching for *.archonnell.com or localhost on any port
         try {
             const url = new URL(origin);
             if (url.hostname === 'archonnell.com' ||
@@ -27,5 +27,17 @@ export const corsMiddleware = cors({
     },
     credentials: true,
     methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
-    allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'X-API-Key']
+    allowedHeaders: [
+        'Content-Type',
+        'Authorization',
+        'X-Requested-With',
+        'X-API-Key',
+        'X-CSRF-Token',
+        'x-csrf-token',
+        'X-Session-Passive',
+        'x-session-passive',
+        'Accept',
+        'Origin'
+    ],
+    exposedHeaders: ['Set-Cookie', 'X-CSRF-Token', 'x-csrf-token']
 });

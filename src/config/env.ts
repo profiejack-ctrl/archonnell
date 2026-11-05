@@ -13,7 +13,17 @@ const envSchema = z.object({
   JWT_EXPIRES_IN: z.string().default('7d'),
   COOKIE_DOMAIN: z.string().default('localhost'),
   COOKIE_SECRET: z.string().default('archon_nell_cookie_secret_dev'),
-  ALLOWED_ORIGINS: z.string().default('http://localhost:5173,http://localhost:3000')
+  ALLOWED_ORIGINS: z.string().default('http://localhost:5173,http://localhost:3000'),
+
+  // Email SMTP Configuration
+  SMTP_HOST: z.string().default(''),
+  SMTP_PORT: z.string().default('587').transform((val) => parseInt(val, 10)),
+  SMTP_SECURE: z.string().default('false').transform((val) => val.toLowerCase() === 'true'),
+  SMTP_USER: z.string().default(''),
+  SMTP_PASS: z.string().default(''),
+  SMTP_FROM_EMAIL: z.string().default('no-reply@archonnell.com'),
+  SMTP_FROM_NAME: z.string().default('Archon Nell Incorporated'),
+  OTP_EXPIRATION_MINUTES: z.string().default('5').transform((val) => parseInt(val, 10))
 });
 
 const parsedEnv = envSchema.safeParse(process.env);

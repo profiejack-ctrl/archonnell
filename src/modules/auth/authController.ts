@@ -1,6 +1,7 @@
 import { Request, Response, NextFunction } from 'express';
 import { z } from 'zod';
 import * as authService from './authService.js';
+import * as otpService from './otpService.js';
 import { env } from '../../config/env.js';
 
 const loginSchema = z.object({
@@ -13,6 +14,19 @@ const registerSchema = z.object({
   password: z.string().min(6),
   fullName: z.string().min(2),
   role: z.string().optional()
+});
+
+const sendOtpSchema = z.object({
+  email: z.string().email(),
+  purpose: z.string().default('LOGIN'), // 'LOGIN', 'CHECKOUT', 'PASSWORD_RESET', 'APPLICANT', 'DRIVER', etc.
+  module: z.string().default('auth')
+});
+
+const verifyOtpSchema = z.object({
+  email: z.string().email(),
+  code: z.string().min(4).max(10),
+  purpose: z.string().default('LOGIN'),
+  module: z.string().optional()
 });
 
 export async function login(req: Request, res: Response, next: NextFunction) {
@@ -75,4 +89,34 @@ export async function logout(req: Request, res: Response) {
     success: true,
     message: 'Logged out successfully.'
   });
+}
+
+export async function sendOtp(req: Request, res: Response, next: NextFunction) {
+  try {
+    const { email, purpose, module } = sendOtpSchema.parse(req.body);
+    const result = await otpService.sendOtp(email, purpose, module);
+
+    res.json({
+      success: true,
+      message: `Verification code sent to ${email}.`,
+      data: result
+    });
+  } catch (err) {
+    next(err);
+  }
+}
+
+export async function verifyOtp(req: Request, res: Response, next: NextFunction) {
+  try {
+    const { email, code, purpose, module } = verifyOtpSchema.parse(req.body);
+    const result = await otpService.verifyOtp(email, code, purpose, module);
+
+    res.json({
+      success: true,
+      message: 'OTP verified successfully.',
+      data: result
+    });
+  } catch (err) {
+    next(err);
+  }
 }

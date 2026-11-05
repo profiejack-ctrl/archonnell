@@ -52,6 +52,19 @@ CREATE TABLE IF NOT EXISTS auth_core.audit_logs (
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
 
+CREATE TABLE IF NOT EXISTS auth_core.otps (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    email VARCHAR(255) NOT NULL,
+    code VARCHAR(10) NOT NULL,
+    purpose VARCHAR(50) NOT NULL, -- 'LOGIN', 'CHECKOUT', 'PASSWORD_RESET', 'APPLICANT', 'DRIVER'
+    module VARCHAR(50) NOT NULL,  -- 'auth', 'shop', 'hrms', 'wfm', 'payroll', 'fleet'
+    expires_at TIMESTAMP WITH TIME ZONE NOT NULL,
+    is_used BOOLEAN DEFAULT FALSE,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_auth_otps_lookup ON auth_core.otps(email, purpose, is_used);
+
 -- ------------------------------------------------------------------------------
 -- 3. HRMS SCHEMA (Core Human Capital & Recruitment)
 -- ------------------------------------------------------------------------------

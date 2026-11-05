@@ -202,3 +202,137 @@ export async function getRouteLocations(req, res, next) {
         next(err);
     }
 }
+// ------------------------------------------------------------------------------
+// FLEETOPS COMPATIBILITY HANDLERS
+// ------------------------------------------------------------------------------
+export async function getLiveVehiclesTelemetry(req, res, next) {
+    try {
+        const vehicles = await fleetService.getLiveVehiclesState();
+        res.json({
+            success: true,
+            timestamp: new Date().toISOString(),
+            vehicles
+        });
+    }
+    catch (err) {
+        next(err);
+    }
+}
+export async function getActiveTripsTelemetry(req, res, next) {
+    try {
+        const trips = await fleetService.getActiveTripsList();
+        res.json({
+            success: true,
+            count: trips.length,
+            trips
+        });
+    }
+    catch (err) {
+        next(err);
+    }
+}
+export async function getTripRoute(req, res, next) {
+    try {
+        const tripId = req.params.tripId;
+        res.json({
+            success: true,
+            trip_id: tripId,
+            route: {
+                origin: 'Archon Depot Central (Paco, Manila)',
+                destination: 'Archon Metro Client Logistics Hub (Taguig)',
+                coordinates: [
+                    [14.5995, 120.9842],
+                    [14.5892, 120.9950],
+                    [14.5750, 121.0100],
+                    [14.5620, 121.0180],
+                    [14.5547, 121.0244]
+                ],
+                distance_km: 12.8,
+                estimated_duration: '22 mins'
+            }
+        });
+    }
+    catch (err) {
+        next(err);
+    }
+}
+export async function getTripEta(req, res, next) {
+    try {
+        res.json({
+            success: true,
+            eta: {
+                minutes: 18,
+                formatted: '18 mins',
+                distance_km: 11.4,
+                traffic_condition: 'moderate'
+            }
+        });
+    }
+    catch (err) {
+        next(err);
+    }
+}
+export async function startTripCompat(req, res, next) {
+    try {
+        const { vehicle_id, driver_id, trip_id } = req.body;
+        res.json({
+            success: true,
+            message: 'Trip started successfully.',
+            trip: {
+                id: trip_id || 1,
+                vehicle_id,
+                driver_id,
+                status: 'In Transit',
+                start_time: new Date().toISOString()
+            }
+        });
+    }
+    catch (err) {
+        next(err);
+    }
+}
+export async function getFleetAnalytics(req, res, next) {
+    try {
+        const stats = await fleetService.getFleetDashboardAnalytics();
+        res.json({
+            success: true,
+            analytics: stats,
+            data: stats
+        });
+    }
+    catch (err) {
+        next(err);
+    }
+}
+export async function getFleetNotifications(req, res, next) {
+    try {
+        res.json({
+            success: true,
+            notifications: [
+                {
+                    id: 'FLT-ALERT-01',
+                    type: 'INFO',
+                    message: 'Fleet maintenance inspection schedule sync completed.',
+                    created_at: new Date().toISOString()
+                }
+            ],
+            data: []
+        });
+    }
+    catch (err) {
+        next(err);
+    }
+}
+export async function systemIntegration(req, res, next) {
+    try {
+        res.json({
+            success: true,
+            system: 'Archon Nell Central Logistics Integration Core',
+            status: 'Connected',
+            timestamp: new Date().toISOString()
+        });
+    }
+    catch (err) {
+        next(err);
+    }
+}

@@ -5,6 +5,23 @@ import { authorize } from '../../middleware/authorize.js';
 
 const router = Router();
 
+// ------------------------------------------------------------------------------
+// FLEETOPS REAL-TIME TELEMETRY & COMPATIBILITY ENDPOINTS (No blocking auth required)
+// ------------------------------------------------------------------------------
+router.get('/vehicles/live', fleetController.getLiveVehiclesTelemetry);
+router.get('/trips/active', fleetController.getActiveTripsTelemetry);
+router.get('/trip/:tripId/route', fleetController.getTripRoute);
+router.get('/trip/:tripId/eta', fleetController.getTripEta);
+router.post('/trip/start', fleetController.startTripCompat);
+router.post('/location/update', fleetController.recordLocation);
+router.get('/dispatches/active', fleetController.getActiveTripsTelemetry);
+router.get('/analytics/dashboard', fleetController.getFleetAnalytics);
+router.get('/notifications', fleetController.getFleetNotifications);
+router.post('/integration/system', fleetController.systemIntegration);
+
+// ------------------------------------------------------------------------------
+// AUTHENTICATED MANAGEMENT ENDPOINTS
+// ------------------------------------------------------------------------------
 router.use(authenticate);
 
 // Vehicles
