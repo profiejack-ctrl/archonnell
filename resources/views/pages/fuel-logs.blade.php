@@ -1,0 +1,314 @@
+<?php
+$fuelLogs = $dashboard['fuelLogs'] ?? [];
+$fuelCount = count($fuelLogs);
+$totalLiters = array_sum(array_map(fn ($log) => (float) preg_replace('/[^0-9.]/', '', $log['liters'] ?? '0'), $fuelLogs));
+$totalCost = array_sum(array_map(fn ($log) => (float) preg_replace('/[^0-9.]/', '', $log['cost'] ?? '0'), $fuelLogs));
+$averagePrice = $totalLiters > 0 ? $totalCost / $totalLiters : 0;
+$driverOptions = $dashboard['driverOptions'] ?? collect();
+?>
+<section class="panel fuel-page">
+    <div class="panel-header">
+        <div>
+            <p class="eyebrow">Fleet expenses</p>
+            <h3>Fuel Logs</h3>
+            <p class="fuel-intro"><?= $dashboard['isAdmin'] ? 'Record refuels, compare fuel volume and spend, and attach receipt proof.' : 'Submit fuel records with receipt proof and review your own entries.' ?> <a class="fuel-expense-link" href="<?= htmlspecialchars($dashboard['basePath'].'/cost-analytics', ENT_QUOTES, 'UTF-8') ?>">Log meals and parking in Cost Analytics</a></p>
+        </div>
+        <button class="pill-button" type="button" onclick="openFuelModal()">+ Log fuel</button>
+    </div>
+
+    <?php if (session('status')): ?>
+        <div class="alert-banner status-approved" role="status" style="padding:10px 14px;border-radius:12px;margin-bottom:14px;font-weight:600;">
+            <?= htmlspecialchars(session('status'), ENT_QUOTES, 'UTF-8') ?>
+        </div>
+    <?php endif; ?>
+    <?php if ($errors->any()): ?>
+        <div class="alert-banner" role="alert" style="padding:10px 14px;border-radius:12px;margin-bottom:14px;font-weight:600;background:rgba(231,76,60,0.12);color:#e74c3c;">
+            <?= htmlspecialchars($errors->first(), ENT_QUOTES, 'UTF-8') ?>
+        </div>
+    <?php endif; ?>
+
+    <div class="fuel-summary" aria-label="Summary of the latest fuel records">
+        <article class="fuel-stat"><span>Records loaded</span><strong id="fuel-count"><?= $fuelCount ?></strong><small><?= $dashboard['isAdmin'] ? 'All saved fuel logs' : 'Your saved fuel logs' ?></small></article>
+        <article class="fuel-stat"><span>Fuel volume</span><strong id="fuel-liters"><?= number_format($totalLiters, 1) ?> L</strong><small>Across loaded records</small></article>
+        <article class="fuel-stat"><span>Total recorded cost</span><strong id="fuel-cost">&#8369;<?= number_format($totalCost, 2) ?></strong><small>Across loaded records</small></article>
+        <article class="fuel-stat"><span>Average price</span><strong id="fuel-average"><?= $totalLiters > 0 ? '&#8369;'.number_format($averagePrice, 2) : '—' ?></strong><small>Cost per liter</small></article>
+    </div>
+
+    <div class="fuel-log-panel">
+        <div class="fuel-table-heading">
+            <div><h4><?= $dashboard['isAdmin'] ? 'All refuels' : 'Your refuels' ?></h4><p><?= $dashboard['isAdmin'] ? 'Showing every saved entry from all accounts.' : 'Showing only entries submitted by your account.' ?></p></div>
+            <label class="fuel-search-wrap" for="fuel-search">
+                <input id="fuel-search" type="search" placeholder="Search driver, plate, or date" autocomplete="off">
+            </label>
+        </div>
+        <div class="table-wrapper">
+            <table id="fuel-log-table">
+                <thead>
+                    <tr><?php if ($dashboard['isAdmin']): ?><th>Submitted by</th><?php endif; ?><th>Driver</th><th>Vehicle plate no.</th><th>Date</th><th>Before reading</th><th>After reading</th><th>Proof photos</th></tr>
+                </thead>
+                <tbody>
+                    <?php foreach ($fuelLogs as $log): ?>
+                        <?php
+                        $litersValue = (float) preg_replace('/[^0-9.]/', '', $log['liters'] ?? '0');
+                        $costValue = (float) preg_replace('/[^0-9.]/', '', $log['cost'] ?? '0');
+                        ?>
+                        <tr class="fuel-log-row" data-search="<?= htmlspecialchars(strtolower(($log['driver'] ?? '').' '.($log['plate_number'] ?? '').' '.($log['vehicle'] ?? '').' '.($log['logged_at'] ?? '')), ENT_QUOTES, 'UTF-8') ?>" data-liters="<?= $litersValue ?>" data-cost="<?= $costValue ?>">
+                            <?php if ($dashboard['isAdmin']): ?><td><?= htmlspecialchars($log['submitted_by'], ENT_QUOTES, 'UTF-8') ?></td><?php endif; ?>
+                            <td><strong><?= htmlspecialchars($log['driver'] ?? 'Unknown driver', ENT_QUOTES, 'UTF-8') ?></strong></td>
+                            <td><?= htmlspecialchars($log['plate_number'] ?? 'Unknown plate', ENT_QUOTES, 'UTF-8') ?></td>
+                            <td><?= htmlspecialchars($log['logged_at'] ?? '—', ENT_QUOTES, 'UTF-8') ?></td>
+                            <td>
+                            <?php if (isset($log['fuel_level_before'])): $beforeLevel = max(0, min(100, (float) $log['fuel_level_before'])); $beforeLabel = $beforeLevel <= 0 ? 'Empty' : ($beforeLevel <= 25 ? 'Low' : ($beforeLevel <= 50 ? 'Half' : ($beforeLevel <= 75 ? 'High' : 'Full'))); ?>
+        <div class="fuel-meter" role="progressbar" aria-label="Fuel level before refuel" aria-valuemin="0" aria-valuemax="100" aria-valuenow="<?= $beforeLevel ?>"><span style="width:<?= $beforeLevel ?>%"></span></div>
+                                <small><?= $beforeLabel ?></small>
+    <?php else: ?>&mdash;<?php endif; ?>
+</td>
+                            <td>
+                            <?php if (isset($log['fuel_level_after'])): $afterLevel = max(0, min(100, (float) $log['fuel_level_after'])); $afterLabel = $afterLevel <= 0 ? 'Empty' : ($afterLevel <= 25 ? 'Low' : ($afterLevel <= 50 ? 'Half' : ($afterLevel <= 75 ? 'High' : 'Full'))); ?>
+        <div class="fuel-meter" role="progressbar" aria-label="Fuel level after refuel" aria-valuemin="0" aria-valuemax="100" aria-valuenow="<?= $afterLevel ?>"><span style="width:<?= $afterLevel ?>%"></span></div>
+                                <small><?= $afterLabel ?></small>
+    <?php else: ?>&mdash;<?php endif; ?>
+</td>
+                            <td class="fuel-proof-links">
+    <?php if (!empty($log['fuel_level_before_image'])): ?><a href="<?= route('fuel-logs.proof', ['fuelLog' => $log['id'], 'type' => 'before']) ?>" target="_blank" rel="noopener noreferrer">Before photo</a><?php endif; ?>
+    <?php if (!empty($log['fuel_level_after_image'])): ?><a href="<?= route('fuel-logs.proof', ['fuelLog' => $log['id'], 'type' => 'after']) ?>" target="_blank" rel="noopener noreferrer">After photo</a><?php endif; ?>
+    <?php if (!empty($log['receipt_image'])): ?><a href="<?= route('fuel-logs.proof', ['fuelLog' => $log['id'], 'type' => 'receipt']) ?>" target="_blank" rel="noopener noreferrer">Receipt</a><?php endif; ?>
+    <?php if (empty($log['fuel_level_before_image']) && empty($log['fuel_level_after_image']) && empty($log['receipt_image'])): ?>No photos<?php endif; ?>
+</td>
+                        </tr>
+                    <?php endforeach; ?>
+                    <?php if ($fuelCount === 0): ?>
+                        <tr id="fuel-empty-row"><td colspan="<?= $dashboard['isAdmin'] ? 7 : 6 ?>" class="fuel-empty"><?= $dashboard['isAdmin'] ? 'No fuel logs have been saved yet.' : 'You have not submitted any fuel logs yet. Select "Log fuel" to add your first record.' ?></td></tr>
+                    <?php endif; ?>
+                    <tr id="fuel-no-results" hidden><td colspan="<?= $dashboard['isAdmin'] ? 7 : 6 ?>" class="fuel-empty">No records match your search.</td></tr>
+                </tbody>
+            </table>
+        </div>
+    </div>
+</section>
+
+<div id="fuel-modal" class="modal-backdrop" style="display:none;" role="dialog" aria-modal="true" aria-labelledby="fuel-modal-title">
+    <div class="modal-card">
+        <div class="modal-header">
+            <div><p class="eyebrow">New transaction</p><h3 id="fuel-modal-title">Log a refuel</h3></div>
+            <button class="close-btn" type="button" aria-label="Close form" onclick="closeFuelModal()">×</button>
+        </div>
+        <p class="fuel-modal-copy">Enter the fuel amount and the total paid on the receipt.</p>
+        <form method="POST" action="<?= $dashboard['isAdmin'] ? route('fuel-logs.store') : route('users.fuel-logs.store') ?>" id="fuel-form" enctype="multipart/form-data">
+            <?= csrf_field() ?>
+            <div class="form-group fuel-field">
+                <label for="fuel-vehicle">Vehicle</label>
+                <select class="form-control" id="fuel-vehicle" name="vehicle_id" required>
+                    <option value="">Choose a vehicle</option>
+                    <?php foreach ($dashboard['vehicleOptions'] ?? [] as $vehicle): ?>
+                        <option value="<?= (int) $vehicle->id ?>" data-fuel-level="<?= htmlspecialchars((string) $vehicle->fuel_level, ENT_QUOTES, 'UTF-8') ?>" <?= (string) old('vehicle_id') === (string) $vehicle->id ? 'selected' : '' ?>><?= htmlspecialchars($vehicle->plate_number.' — '. $vehicle->name, ENT_QUOTES, 'UTF-8') ?></option>
+                    <?php endforeach; ?>
+                </select>
+                <?php if (empty($dashboard['vehicleOptions'])): ?><small class="fuel-help">Add a vehicle before recording fuel.</small><?php endif; ?>
+            </div>
+            <div class="form-group fuel-field">
+                <label for="fuel-driver">Driver</label>
+                <?php if ($dashboard['isAdmin']): ?>
+                <select class="form-control" id="fuel-driver" name="driver_id">
+                    <option value="">No driver assigned</option>
+                    <?php foreach ($driverOptions as $driver): ?>
+                        <option value="<?= (int) $driver->id ?>" <?= (string) old('driver_id') === (string) $driver->id ? 'selected' : '' ?>><?= htmlspecialchars($driver->display_name.' ('.$driver->employee_id.')', ENT_QUOTES, 'UTF-8') ?></option>
+                    <?php endforeach; ?>
+                </select>
+                <?php if ($driverOptions->isEmpty()): ?><small class="fuel-help">You can still save this log under your account without a driver profile.</small><?php endif; ?>
+                <?php else: ?>
+                    <input class="form-control" type="text" id="fuel-driver" value="<?= htmlspecialchars($dashboard['user']['name'], ENT_QUOTES, 'UTF-8') ?> (you)" readonly aria-readonly="true">
+                    <input type="hidden" name="driver_id" value="">
+                    <small class="fuel-help">You will be listed as the driver for this refuel. The log is saved under your account.</small>
+                <?php endif; ?>
+            </div>
+            <div class="fuel-input-grid">
+                <div class="form-group fuel-field">
+                    <label for="fuel-level-before">Fuel level before</label>
+                    <input class="form-control" type="number" id="fuel-level-before" name="fuel_level_before" min="0" max="100" step="0.1" value="<?= htmlspecialchars((string) old('fuel_level_before', ''), ENT_QUOTES, 'UTF-8') ?>" required aria-describedby="fuel-level-help">
+                    <div class="fuel-meter fuel-meter-preview" aria-hidden="true"><span id="fuel-before-meter"></span></div>
+                    <small class="fuel-gauge-label" id="fuel-before-gauge-label">Select a vehicle to load its saved reading.</small>
+                </div>
+                <div class="form-group fuel-field">
+                    <label for="fuel-level-after">Fuel level after</label>
+                    <input class="form-control" type="number" id="fuel-level-after" name="fuel_level_after" min="0" max="100" step="0.1" value="<?= htmlspecialchars((string) old('fuel_level_after', ''), ENT_QUOTES, 'UTF-8') ?>" required>
+                    <div class="fuel-meter fuel-meter-preview" aria-hidden="true"><span id="fuel-after-meter"></span></div>
+                    <small class="fuel-gauge-label" id="fuel-after-gauge-label">Enter the observed reading.</small>
+                </div>
+            </div>
+            <small class="fuel-help" id="fuel-level-help">Enter the observed before reading yourself. Differences from the saved vehicle reading are flagged for review.</small>
+            <div class="fuel-input-grid fuel-evidence-grid">
+                <div class="form-group fuel-field">
+                    <label for="fuel-before-proof">Photo before refueling (JPG, PNG, or WebP; max 5 MB)</label>
+                    <input class="form-control" type="file" id="fuel-before-proof" name="fuel_level_before_image" accept="image/jpeg,image/png,image/webp" required>
+                </div>
+                <div class="form-group fuel-field">
+                    <label for="fuel-after-proof">Photo after refueling (JPG, PNG, or WebP; max 5 MB)</label>
+                    <input class="form-control" type="file" id="fuel-after-proof" name="fuel_level_after_image" accept="image/jpeg,image/png,image/webp" required>
+                </div>
+            </div>
+            <div class="form-group fuel-field">
+                <label for="fuel-proof">Fuel receipt (required proof; JPG, PNG, or WebP, max 5 MB)</label>
+                <input class="form-control" type="file" id="fuel-proof" name="receipt_image" accept="image/jpeg,image/png,image/webp" required>
+            </div>
+            <div class="fuel-input-grid">
+                <div class="form-group fuel-field">
+                    <label for="fuel-liters-input">Fuel added (liters)</label>
+                    <input class="form-control" type="number" id="fuel-liters-input" name="liters" min="0.1" max="2000" step="0.1" inputmode="decimal" placeholder="e.g. 45.5" value="<?= htmlspecialchars((string) old('liters', ''), ENT_QUOTES, 'UTF-8') ?>" required>
+                </div>
+                <div class="form-group fuel-field">
+                    <label for="fuel-cost-input">Total paid (PHP)</label>
+                    <input class="form-control" type="number" id="fuel-cost-input" name="cost" min="0" max="1000000" step="0.01" inputmode="decimal" placeholder="e.g. 3200.00" value="<?= htmlspecialchars((string) old('cost', ''), ENT_QUOTES, 'UTF-8') ?>" required>
+                </div>
+            </div>
+            <div class="fuel-rate-preview" id="fuel-rate-preview" aria-live="polite">Enter liters and total paid to estimate the price per liter.</div>
+            <div class="form-group fuel-field">
+                <label for="fuel-date">Refuel date</label>
+                <input class="form-control" type="date" id="fuel-date" name="logged_at" required max="<?= now()->toDateString() ?>" value="<?= htmlspecialchars((string) old('logged_at', now()->toDateString()), ENT_QUOTES, 'UTF-8') ?>">
+            </div>
+            <div class="fuel-form-actions">
+                <button type="button" class="btn-secondary" onclick="closeFuelModal()">Cancel</button>
+                <button type="submit" class="btn-primary" <?= empty($dashboard['vehicleOptions']) ? 'disabled' : '' ?>>Save fuel log</button>
+            </div>
+        </form>
+    </div>
+</div>
+<style>
+    .fuel-intro { margin: 6px 0 0; color: var(--muted); font-size: .9rem; }
+    .fuel-expense-link { display:inline-block; margin-left:6px; color:var(--accent); font-weight:700; text-decoration:none; }
+    .fuel-expense-link:hover { text-decoration:underline; }
+    .fuel-summary { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 14px; margin: 4px 0 20px; }
+    .fuel-stat { display: flex; flex-direction: column; gap: 7px; min-width: 0; padding: 16px 18px; border: 1px solid var(--border); border-radius: 14px; background: var(--surface); }
+    .fuel-stat span, .fuel-stat small { color: var(--muted); font-size: .8rem; }
+    .fuel-stat strong { color: var(--text); font-size: 1.35rem; line-height: 1.2; }
+    .fuel-log-panel { overflow: hidden; border: 1px solid var(--border); border-radius: 16px; background: var(--surface); }
+    .fuel-table-heading { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 18px 20px; }
+    .fuel-table-heading h4 { margin: 0 0 4px; color: var(--text); }
+    .fuel-table-heading p { margin: 0; color: var(--muted); font-size: .82rem; }
+    .fuel-search-wrap { display: flex; align-items: center; gap: 8px; width: min(100%, 270px); padding: 0 12px; border: 1px solid var(--border); border-radius: 10px; color: var(--muted); }
+    .fuel-search-wrap input { width: 100%; min-width: 0; padding: 10px 0; border: 0; outline: 0; background: transparent; color: var(--text); }
+    .fuel-log-panel .table-wrapper { border-top: 1px solid var(--border); max-height: min(62vh, 640px); overflow: auto; overscroll-behavior: contain; -webkit-overflow-scrolling: touch; }
+    .fuel-log-panel table { min-width: 1080px; margin: 0; }
+    .fuel-log-panel thead th { position: sticky; top: 0; z-index: 2; background: var(--surface); }
+    .fuel-log-panel th, .fuel-log-panel td { padding: 13px 20px; }
+    .fuel-log-panel td strong { color: var(--text); }
+    .fuel-meter { width: 110px; max-width: 100%; height: 9px; overflow: hidden; margin-bottom: 4px; border-radius: 999px; background: var(--border); }
+    .fuel-meter span { display: block; height: 100%; border-radius: inherit; background: linear-gradient(90deg, #4cc9f0, #4361ee); }
+    .fuel-meter-preview { margin: 8px 0 3px; }
+    .fuel-gauge-label { color: var(--muted); }
+    .fuel-log-panel td small { color: var(--muted); }
+    .fuel-proof-links { min-width: 125px; }
+    .fuel-proof-links a { display: block; width: fit-content; margin: 2px 0; }
+    .fuel-empty { padding: 30px 20px !important; text-align: center; color: var(--muted); }
+    .modal-header .eyebrow { margin: 0 0 4px; }
+    .modal-header h3 { margin: 0; }
+    .fuel-modal-copy { margin: 0 0 18px; color: var(--muted); font-size: .88rem; }
+    .fuel-field { margin: 0 0 14px; }
+    .fuel-field .form-control { width: 100%; margin-top: 6px; }
+    .fuel-input-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+    .fuel-help { display: block; margin-top: 6px; color: var(--muted); }
+    .fuel-rate-preview { margin: 0 0 14px; padding: 11px 13px; border-radius: 10px; background: var(--accent-light); color: var(--text); font-size: .84rem; }
+    .fuel-form-actions { display: flex; justify-content: flex-end; gap: 10px; margin-top: 18px; }
+    .fuel-form-actions button { min-width: 120px; }
+    .fuel-form-actions button:disabled { opacity: .55; cursor: not-allowed; }
+    @media (max-width: 900px) { .fuel-summary { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+    @media (max-width: 600px) {
+        .fuel-summary { gap: 9px; }
+        .fuel-stat { padding: 13px; }
+        .fuel-stat strong { font-size: 1.12rem; }
+        .fuel-table-heading { align-items: stretch; flex-direction: column; }
+        .fuel-search-wrap { width: 100%; }
+        .fuel-log-panel th, .fuel-log-panel td { padding: 11px 12px; }
+        .fuel-input-grid { grid-template-columns: 1fr; gap: 0; }
+    }
+</style>
+
+<script>
+(() => {
+    const modal = document.getElementById('fuel-modal');
+    const search = document.getElementById('fuel-search');
+    const rows = Array.from(document.querySelectorAll('.fuel-log-row'));
+    const noResults = document.getElementById('fuel-no-results');
+    const litersInput = document.getElementById('fuel-liters-input');
+    const costInput = document.getElementById('fuel-cost-input');
+    const vehicleSelect = document.getElementById('fuel-vehicle');
+    const fuelBeforeInput = document.getElementById('fuel-level-before');
+    const fuelAfterInput = document.getElementById('fuel-level-after');
+    const preview = document.getElementById('fuel-rate-preview');
+
+    window.openFuelModal = () => {
+        if (!modal) return;
+        modal.style.display = 'flex';
+        document.getElementById('fuel-vehicle')?.focus();
+    };
+    window.closeFuelModal = () => { if (modal) modal.style.display = 'none'; };
+
+    modal?.addEventListener('click', (event) => { if (event.target === modal) window.closeFuelModal(); });
+    document.addEventListener('keydown', (event) => { if (event.key === 'Escape' && modal?.style.display === 'flex') window.closeFuelModal(); });
+
+    search.addEventListener('input', () => {
+        const query = search.value.trim().toLowerCase();
+        let count = 0;
+        let liters = 0;
+        let cost = 0;
+        rows.forEach((row) => {
+            const visible = row.dataset.search.includes(query);
+            row.hidden = !visible;
+            if (visible) {
+                count++;
+                liters += Number(row.dataset.liters || 0);
+                cost += Number(row.dataset.cost || 0);
+            }
+        });
+        noResults.hidden = count !== 0 || rows.length === 0;
+        document.getElementById('fuel-count').textContent = count;
+        document.getElementById('fuel-liters').textContent = `${liters.toLocaleString(undefined, { minimumFractionDigits: 1, maximumFractionDigits: 1 })} L`;
+        document.getElementById('fuel-cost').textContent = `\u20B1${cost.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+        document.getElementById('fuel-average').textContent = liters > 0 ? `\u20B1${(cost / liters).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : '—';
+    });
+
+    const updateRate = () => {
+        const liters = Number(litersInput.value);
+        const cost = Number(costInput.value);
+        preview.textContent = liters > 0 && cost >= 0
+            ? `Estimated price per liter: \u20B1${(cost / liters).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+            : 'Enter liters and total paid to estimate the price per liter.';
+    };
+    litersInput?.addEventListener('input', updateRate);
+    costInput?.addEventListener('input', updateRate);
+
+    vehicleSelect?.addEventListener('change', () => {
+        fuelBeforeInput.value = '';
+        fuelAfterInput.value = '';
+        updateGauge(fuelBeforeInput, 'fuel-before-meter', 'fuel-before-gauge-label');
+        updateGauge(fuelAfterInput, 'fuel-after-meter', 'fuel-after-gauge-label');
+    });
+
+    function updateGauge(input, meterId, labelId) {
+        const value = Number(input?.value);
+        const meter = document.getElementById(meterId);
+        const label = document.getElementById(labelId);
+        if (!meter || !label) return;
+        if (!input?.value || !Number.isFinite(value)) {
+            meter.style.width = '0%';
+            label.textContent = 'Enter a reading to see the gauge.';
+            return;
+        }
+
+        const level = Math.max(0, Math.min(100, value));
+        meter.style.width = `${level}%`;
+        label.textContent = level === 0 ? 'Empty' : level <= 25 ? 'Low' : level <= 50 ? 'Half' : level <= 75 ? 'High' : 'Full';
+    }
+
+    fuelBeforeInput?.addEventListener('input', () => updateGauge(fuelBeforeInput, 'fuel-before-meter', 'fuel-before-gauge-label'));
+    fuelAfterInput?.addEventListener('input', () => updateGauge(fuelAfterInput, 'fuel-after-meter', 'fuel-after-gauge-label'));
+    if (vehicleSelect?.value) {
+        updateGauge(fuelBeforeInput, 'fuel-before-meter', 'fuel-before-gauge-label');
+        updateGauge(fuelAfterInput, 'fuel-after-meter', 'fuel-after-gauge-label');
+    }
+
+    <?php if ($errors->any()): ?>
+    window.openFuelModal();
+    <?php endif; ?>
+})();
+</script>
