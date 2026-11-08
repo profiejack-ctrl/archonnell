@@ -1,0 +1,1985 @@
+import { useEffect, useMemo, useState } from "react";
+import { CalendarDays, Plus, ShieldCheck, Pencil } from "lucide-react";
+import { jsPDF } from "jspdf";
+import { autoTable } from "jspdf-autotable";
+import { useLocation, useNavigate, useSearchParams } from "react-router-dom";
+import { hmoTabs, hmoTabForPath } from "./hmoNavigation";
+import {
+  Button,
+  Card,
+  Empty,
+  ErrorAlert,
+  Field,
+  LoadingState,
+  Modal,
+  PageHeader,
+  Segmented,
+  RevealToggle,
+  TextInput,
+  ghost,
+  input,
+  maskValue,
+} from "../../components/common/ui";
+import { employeeService } from "../employees/employeeService";
+import type { Employee } from "../../types/domain";
+import { hmoService } from "./hmoService";
+import { hasOpenHmoEnrollment, hmoEligibilityDate, isHmoEmployeeEligible } from "./hmoEnrollment";
+import { recordAudit } from "../audit/auditService";
+import { localToday } from "../../components/common/tableUi";
+import { can } from "../auth/permissions";
+import { StatusBadge } from "../../components/common/StatusBadge";
+import { loadHolidays } from "../settings/payrollSettings";
+import { MAXICARE_FOLLOW_UP_WORKING_DAYS, manilaToday, maxicareFollowUpDue, memberIdCheck, submittedByUser, workingDaysBetween } from "../../../backend-render/hmoRules.js";
+import { getCurrentUser } from "../auth/authService";
+import type {
+  HmoDependent,
+  HmoEnrollment,
+  HmoPlan,
+  HmoProvider,
+} from "./hmoTypes";
+// The browser's local date; toISOString() would give yesterday's date before 8 AM in the Philippines.
+const today = localToday;
+const money = (n: number | null | undefined) =>
+  n == null
+    ? "Unavailable"
+    : new Intl.NumberFormat("en-PH", {
+        style: "currency",
+        currency: "PHP",
+        maximumFractionDigits: 2,
+      }).format(n);
+export default function HmoBenefits({
+  section = "hmo",
+}: {
+  section?: "hmo" | "dependents";
+}) {
+  const { pathname } = useLocation();
+  // ?status=pending (from the Dashboard) shows only enrollments and dependents awaiting approval.
+  const [params, setParams] = useSearchParams();
+  const pendingOnly = params.get("status") === "pending";
+  const isPending = (item: { approvalStatus?: string; status: string }) => item.approvalStatus === "Pending" && ["Pending", "Submitted"].includes(item.status);
+  const showAll = () => { const next = new URLSearchParams(params); next.delete("status"); setParams(next, { replace: true }); };
+  const pendingChip = pendingOnly && (
+    <p className="mb-0 mt-4 inline-flex items-center gap-2 rounded-lg border border-blue-100 bg-blue-50 px-3 py-1.5 text-[11px] font-semibold text-blue-800">
+      Showing members awaiting approval
+      <button type="button" className="text-blue-700 underline" onClick={showAll}>Show all</button>
+    </p>
+  );
+  const navigate = useNavigate();
+  const tab = section === "dependents" ? "dependents" : hmoTabForPath(pathname);
+  const [providers, setProviders] = useState<HmoProvider[]>([]),
+    [plans, setPlans] = useState<HmoPlan[]>([]),
+    [enrollments, setEnrollments] = useState<HmoEnrollment[]>([]),
+    [dependents, setDependents] = useState<HmoDependent[]>([]),
+    [employees, setEmployees] = useState<Employee[]>([]);
+  const [loading, setLoading] = useState(true),
+    [loadError, setLoadError] = useState(""),
+    [planModal, setPlanModal] = useState(false),
+    [editPlanModal, setEditPlanModal] = useState(false),
+    [selectedPlanId, setSelectedPlanId] = useState<string | null>(null),
+    [enrollModal, setEnrollModal] = useState(false),
+    [dependentModal, setDependentModal] = useState(false);
+  const load = async () => {
+    setLoading(true);
+    setLoadError("");
+    try {
+      const [p, pl, e, d, emp] = await Promise.all([
+        hmoService.providers(),
+        hmoService.plans(),
+        hmoService.enrollments(),
+        hmoService.dependents(),
+        employeeService.getAll(),
+      ]);
+      setProviders(p);
+      setPlans(pl);
+      setEnrollments(e);
+      setDependents(d);
+      setEmployees(emp);
+    } catch (error) {
+      console.error(error);
+      setLoadError(
+        "HMO records could not be loaded. Existing data and actions are unavailable until the connection is restored.",
+      );
+    } finally {
+      setLoading(false);
+    }
+  };
+  useEffect(() => {
+    load();
+  }, []);
+  const maxicareProviders = providers.filter(
+    (p) => p.name.trim().toLowerCase() === "maxicare",
+  );
+  const maxicareProvider =
+    maxicareProviders.find((p) => p.status === "Active") ??
+    maxicareProviders[0];
+  // HMO Plan tab: a list of saved plans; clicking one opens its detail view.
+  const selectedPlan = plans.find((p) => p.id === selectedPlanId);
+  const providerFor = (plan: HmoPlan) =>
+    providers.find((provider) => provider.id === plan.providerId) ?? maxicareProvider;
+  // Employees can be enrolled in any active Maxicare plan, including one close to its coverage end.
+  const enrollmentPlans = plans.filter(
+    (p) => maxicareProviders.some((provider) => provider.id === p.providerId) && (p.status === "Active" || p.status === "Expiring"),
+  );
+  const availableEnrollmentEmployees = employees.filter(
+    (employee) => employee.status === "Active" && employee.employmentStatus?.toLowerCase() !== "resigned" && !hasOpenHmoEnrollment(employee.id, enrollments),
+  );
+  const employeeMap = useMemo(
+    () => new Map(employees.map((e) => [e.id, e])),
+    [employees],
+  );
+  const activeEnrollments = enrollments.filter(
+    (e) =>
+      e.status === "Active" &&
+      e.approvalStatus === "Approved" &&
+      e.maxicareStatus === "Active",
+  );
+  return (
+    <div>
+      {" "}
+      <PageHeader
+        title={
+          section === "dependents"
+            ? "Dependents"
+            : tab === "plan"
+              ? "HMO Plan"
+              : tab === "history"
+                ? "HMO Records"
+                : "HMO"
+        }
+        actions={
+          !loading && !loadError && can("hmo.manage") ? (
+            <>
+              {tab === "plan" && !selectedPlan && (
+                <Button onClick={() => setPlanModal(true)}>
+                  <Plus size={15} />
+                  Add Plan
+                </Button>
+              )}
+              {tab === "enrollment" && (
+                <Button
+                  disabled={
+                    !availableEnrollmentEmployees.length || !enrollmentPlans.length
+                  }
+                  onClick={() => setEnrollModal(true)}
+                >
+                  <Plus size={15} />
+                  Enroll Employee
+                </Button>
+              )}
+              {tab === "dependents" && (
+                <Button
+                  disabled={!activeEnrollments.length}
+                  onClick={() => setDependentModal(true)}
+                >
+                  <Plus size={15} />
+                  Add Dependent
+                </Button>
+              )}
+            </>
+          ) : undefined
+        }
+      />{" "}
+      {section === "hmo" && (
+        <div className="mt-5">
+        <Segmented
+          label="HMO & Benefits sections"
+          options={hmoTabs}
+          value={tab}
+          onChange={(id) =>
+            navigate(
+              hmoTabs.find((item) => item.id === id)?.to ?? "/hmo-benefits/hmo",
+            )
+          }
+          idPrefix="hmo-tab"
+          panelId="hmo-panel"
+        />
+        </div>
+      )}{" "}
+      <div
+        id="hmo-panel"
+        role="tabpanel"
+        aria-labelledby={section === "hmo" ? `hmo-tab-${tab}` : undefined}
+        aria-label={section === "hmo" ? undefined : "Dependents"}
+      >
+        {loadError && (
+          <ErrorAlert onRetry={() => void load()}>{loadError}</ErrorAlert>
+        )}
+        {loading ? (
+          <Card className="mt-4">
+            <LoadingState>Loading HMO records…</LoadingState>
+          </Card>
+        ) : (
+          <>
+            {tab === "plan" &&
+              (selectedPlan ? (
+                <PlanSection
+                  provider={providerFor(selectedPlan)}
+                  plan={selectedPlan}
+                  onBack={() => setSelectedPlanId(null)}
+                  onEdit={() => setEditPlanModal(true)}
+                />
+              ) : (
+                <PlanList plans={plans} providerFor={providerFor} onOpen={setSelectedPlanId} />
+              ))}{" "}
+            {tab === "enrollment" && <>
+              {pendingChip}
+              <EnrollmentSection
+                enrollments={pendingOnly ? enrollments.filter(isPending) : enrollments}
+                plans={plans}
+                employeeMap={employeeMap}
+                onChanged={() => void load()}
+              />
+              {!enrollmentPlans.length && <p className="mt-3 rounded-xl border border-amber-200 bg-amber-50 p-3 text-[12px] text-amber-800">An active Maxicare plan is required before employees can be enrolled.</p>}
+              {enrollmentPlans.length > 0 && !availableEnrollmentEmployees.length && <p className="mt-3 rounded-xl border border-blue-100 bg-blue-50 p-3 text-[12px] text-blue-900">There are no active employees without an open HMO enrollment to select.</p>}
+            </>}{" "}
+            {tab === "dependents" && (<>
+              {pendingChip}
+              <DependentSection
+                dependents={pendingOnly ? dependents.filter(isPending) : dependents}
+                enrollments={enrollments}
+                employeeMap={employeeMap}
+                onChanged={() => void load()}
+              />
+            </>)}{" "}
+            {tab === "history" && (
+              <HmoRecordsSection
+                enrollments={enrollments}
+                plans={plans}
+                dependents={dependents}
+                employeeMap={employeeMap}
+                onChanged={() => void load()}
+              />
+            )}
+          </>
+        )}
+      </div>{" "}
+      {planModal && (
+        <PlanFormModal
+          provider={maxicareProvider}
+          onClose={() => setPlanModal(false)}
+          onSaved={() => {
+            setPlanModal(false);
+            load();
+          }}
+        />
+      )}
+      {editPlanModal && selectedPlan && (
+        <PlanFormModal
+          plan={selectedPlan}
+          openDependents={selectedPlan ? dependents.filter((d) => ["Pending", "Submitted", "Active"].includes(d.status) && enrollments.some((e) => e.id === d.enrollmentId && e.planId === selectedPlan.id && ["Pending", "Submitted", "Active"].includes(e.status))).length : 0}
+          onClose={() => setEditPlanModal(false)}
+          onSaved={() => {
+            setEditPlanModal(false);
+            void load();
+          }}
+        />
+      )}
+      {enrollModal && (
+        <EnrollmentModal
+          employees={employees}
+          enrollments={enrollments}
+          plans={enrollmentPlans}
+          onClose={() => setEnrollModal(false)}
+          onSaved={() => {
+            setEnrollModal(false);
+            load();
+          }}
+        />
+      )}
+      {dependentModal && (
+        <DependentModal
+          enrollments={activeEnrollments}
+          employeeMap={employeeMap}
+          onClose={() => setDependentModal(false)}
+          onSaved={() => {
+            setDependentModal(false);
+            load();
+          }}
+        />
+      )}{" "}
+    </div>
+  );
+}
+function formatHmoDate(value?: string | null) {
+  if (!value) return "Unavailable";
+  // Same style as every other screen ("Oct 3, 2026"); timestamps are shown in the browser's local date.
+  const date = new Date(value.length === 10 ? `${value}T12:00:00` : value);
+  return Number.isNaN(date.getTime())
+    ? "Unavailable"
+    : date.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
+}
+/** HMO Plan tab list: one card per saved plan; clicking a card opens its detail view. */
+function PlanList({
+  plans,
+  providerFor,
+  onOpen,
+}: {
+  plans: HmoPlan[];
+  providerFor: (plan: HmoPlan) => HmoProvider | undefined;
+  onOpen: (planId: string) => void;
+}) {
+  if (!plans.length)
+    return (
+      <Card className="mt-4">
+        <Empty>No plans yet</Empty>
+      </Card>
+    );
+  return (
+    <div className="mt-4 grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
+      {plans.map((plan) => (
+        <PlanCard key={plan.id} plan={plan} provider={providerFor(plan)} onOpen={() => onOpen(plan.id)} />
+      ))}
+    </div>
+  );
+}
+function PlanCard({ plan, provider, onOpen }: { plan: HmoPlan; provider?: HmoProvider; onOpen: () => void }) {
+  const [shown, setShown] = useState(false);
+  const active = plan.status === "Active";
+  return (
+    // The card opens the plan; it is a role="button" div so the eye button can sit inside it.
+    <div
+      role="button"
+      tabIndex={0}
+      onClick={onOpen}
+      onKeyDown={(event) => {
+        if (event.target === event.currentTarget && (event.key === "Enter" || event.key === " ")) {
+          event.preventDefault();
+          onOpen();
+        }
+      }}
+      className="block w-full cursor-pointer rounded-2xl border border-gray-100 bg-gradient-to-r from-blue-50 to-white p-4 text-left shadow-sm transition hover:border-blue-300 hover:shadow-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/40"
+    >
+        <div className="flex items-start justify-between gap-3">
+          <div className="flex min-w-0 items-center gap-3">
+            <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl border border-gray-100 bg-blue-50 px-1 text-center text-[10px] font-extrabold tracking-tight text-blue-600">
+              {(provider?.name ?? "HMO").toUpperCase()}
+            </div>
+            <div className="min-w-0">
+              <div className="truncate text-[12px] text-gray-500">{provider?.name ?? "Provider unavailable"}</div>
+              <div className="truncate text-[15px] font-semibold text-gray-900">{plan.name}</div>
+            </div>
+          </div>
+          <span className={`shrink-0 rounded-full px-3 py-1 text-[11px] font-semibold ${active ? "bg-emerald-100 text-emerald-800" : "bg-gray-100 text-gray-700"}`}>
+            {active ? "Active" : "Inactive"}
+          </span>
+        </div>
+        <dl className="mt-4 grid grid-cols-2 gap-3 text-[12px]">
+          <div>
+            <dt className="text-gray-500">Coverage Period</dt>
+            <dd className="m-0 mt-1 font-semibold text-gray-900">
+              {formatHmoDate(plan.coverageStart)} – {formatHmoDate(plan.coverageEnd)}
+            </dd>
+          </div>
+          <div>
+            <dt className="text-gray-500">Annual Benefit Limit</dt>
+            <dd className="m-0 mt-1 flex items-center justify-between gap-2 font-semibold text-gray-900">
+              <span className="min-w-0 truncate">{maskValue(shown, money(plan.annualBenefitLimit))}</span>
+              <RevealToggle inline shown={shown} onToggle={() => setShown((value) => !value)} />
+            </dd>
+          </div>
+        </dl>
+    </div>
+  );
+}
+function PlanSection({
+  provider,
+  plan,
+  onBack,
+  onEdit,
+}: {
+  provider?: HmoProvider;
+  plan: HmoPlan;
+  onBack: () => void;
+  onEdit: () => void;
+}) {
+  const [shown, setShown] = useState(false);
+  const hidden = (value: string) => maskValue(shown, value);
+  const contribution = (
+    premium: number | null | undefined,
+    share: number | null | undefined,
+  ) =>
+    hidden(premium != null && share != null
+      ? `${money((premium * share) / 100)} (${share}%)`
+      : `Unavailable (${share == null ? "share unavailable" : share + "%"})`);
+  const sectionTitle = "text-[16px] font-semibold text-gray-900";
+  const muted = "text-[12px] text-gray-500";
+  const tableLabel =
+    "bg-gray-50 px-3 py-2.5 text-[12px] font-medium text-gray-500 sm:w-[30%]";
+  const tableValue = "px-3 py-2.5 text-[13px] text-gray-900";
+  const coveragePeriod = `${formatHmoDate(plan.coverageStart)} – ${formatHmoDate(plan.coverageEnd)}`;
+  const benefits = [
+    {
+      label: "Inpatient",
+      included: plan.inpatient,
+      detail: "Hospital admission and inpatient services",
+    },
+    {
+      label: "Outpatient",
+      included: plan.outpatient,
+      detail: "Consultations and outpatient services",
+    },
+    {
+      label: "Emergency",
+      included: plan.emergency,
+      detail: "Emergency care services",
+    },
+    {
+      label: "Preventive Care",
+      included: plan.preventiveCare,
+      detail: "Preventive and routine care",
+    },
+    { label: "Dental", included: plan.dental, detail: "Dental services" },
+  ];
+  return (
+    <div className="mt-4 space-y-4">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <button type="button" className={ghost} onClick={onBack}>
+          Back
+        </button>
+        <div className="flex items-center gap-2">
+          <RevealToggle shown={shown} onToggle={() => setShown((value) => !value)} />
+          {can("hmo.manage") && (
+            <Button onClick={onEdit}>
+              <Pencil size={15} />
+              Edit Plan
+            </Button>
+          )}
+        </div>
+      </div>{" "}
+      <Card className="overflow-hidden border border-gray-100 bg-gradient-to-r from-blue-50 to-white p-4 sm:p-5">
+        {" "}
+        <div className="grid gap-5 md:grid-cols-[minmax(0,1.35fr)_minmax(260px,1fr)] md:items-center">
+          {" "}
+          <div className="flex min-w-0 items-center gap-4">
+            {" "}
+            <div className="flex h-24 w-24 shrink-0 items-center justify-center rounded-xl border border-gray-100 bg-blue-50 px-2 text-center text-[18px] font-extrabold tracking-tight text-blue-600">
+              {(provider?.name ?? "HMO").toUpperCase()}
+            </div>{" "}
+            <div className="min-w-0">
+              {" "}
+              <div className={muted}>HMO Provider</div>{" "}
+              <div className="mt-1 flex flex-wrap items-center gap-2">
+                <h2 className="m-0 text-2xl font-bold text-gray-900">
+                  {provider?.name ?? "Provider unavailable"}
+                </h2>
+                <span
+                  className={`rounded-full px-3 py-1 text-[11px] font-semibold ${provider?.status === "Active" ? "bg-emerald-100 text-emerald-800" : "bg-gray-100 text-gray-700"}`}
+                >
+                  {provider?.status ?? "Unknown status"}
+                </span>
+              </div>{" "}
+              <div className="mt-1 text-lg font-semibold text-gray-900">
+                {plan.name}
+              </div>{" "}
+            </div>{" "}
+          </div>{" "}
+          <div className="grid gap-4 border-t border-gray-100 pt-4 md:border-l md:border-t-0 md:pl-5 md:pt-0">
+            {" "}
+            <div className="flex items-start gap-3">
+              <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-blue-50 text-blue-600">
+                <CalendarDays size={19} />
+              </div>
+              <div>
+                <div className={muted}>Coverage Period</div>
+                <div className="mt-1 text-[14px] font-semibold text-gray-900">
+                  {coveragePeriod}
+                </div>
+              </div>
+            </div>{" "}
+            <div className="flex items-start gap-3">
+              <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-[#fff3d8] text-[#a86b00]">
+                <ShieldCheck size={19} />
+              </div>
+              <div>
+                <div className={muted}>Annual Benefit Limit</div>
+                <div className="mt-1 text-[18px] font-bold text-gray-900">
+                  {hidden(money(plan.annualBenefitLimit))}
+                </div>
+              </div>
+            </div>{" "}
+          </div>{" "}
+        </div>{" "}
+      </Card>{" "}
+      <Card className="p-4 sm:p-5">
+        {" "}
+        <div className="mb-4">
+          <h2 className={sectionTitle}>Coverage Benefits</h2>
+        </div>{" "}
+        <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+          {" "}
+          {benefits.map((benefit) => (
+            <div
+              key={benefit.label}
+              className="rounded-xl border border-gray-100 bg-white p-3"
+            >
+              <div className="flex items-start justify-between gap-2">
+                <h3 className="m-0 text-[13px] font-semibold text-gray-900">
+                  {benefit.label}
+                </h3>
+                <span
+                  className={`rounded-full px-2 py-1 text-[10px] font-semibold ${benefit.included ? "bg-emerald-50 text-emerald-700" : "bg-gray-100 text-gray-600"}`}
+                >
+                  {benefit.included ? "Included" : "Not included"}
+                </span>
+              </div>
+              <p className={`mt-2 ${muted}`}>{benefit.detail}</p>
+            </div>
+          ))}{" "}
+        </div>{" "}
+      </Card>{" "}
+      <Card className="p-4 sm:p-5">
+        {" "}
+        <div className="mb-4">
+          <h2 className={sectionTitle}>Plan Information</h2>
+          <p className={`mt-1 ${muted}`}>
+            Key details for the current HMO plan.
+          </p>
+        </div>{" "}
+        <div className="grid gap-3 lg:grid-cols-2">
+          {" "}
+          <div className="overflow-hidden rounded-lg border border-gray-100">
+            <table className="w-full border-collapse text-left">
+              <tbody>
+                {" "}
+                <tr className="border-b border-gray-100">
+                  <th className={tableLabel}>Plan Name</th>
+                  <td className={tableValue}>{plan.name}</td>
+                </tr>{" "}
+                <tr className="border-b border-gray-100">
+                  <th className={tableLabel}>Provider</th>
+                  <td className={tableValue}>
+                    {provider?.name ?? "Unavailable"}
+                  </td>
+                </tr>{" "}
+                <tr className="border-b border-gray-100">
+                  <th className={tableLabel}>Plan Type</th>
+                  <td className={tableValue}>HMO Plan</td>
+                </tr>{" "}
+                <tr>
+                  <th className={tableLabel}>Monthly Employee Premium</th>
+                  <td className={tableValue}>
+                    {hidden(money(plan.employeeMonthlyPremium))}
+                  </td>
+                </tr>{" "}
+              </tbody>
+            </table>
+          </div>{" "}
+          <div className="overflow-hidden rounded-lg border border-gray-100">
+            <table className="w-full border-collapse text-left">
+              <tbody>
+                {" "}
+                <tr className="border-b border-gray-100">
+                  <th className={tableLabel}>Coverage Start</th>
+                  <td className={tableValue}>
+                    {formatHmoDate(plan.coverageStart)}
+                  </td>
+                </tr>{" "}
+                <tr className="border-b border-gray-100">
+                  <th className={tableLabel}>Coverage End</th>
+                  <td className={tableValue}>
+                    {formatHmoDate(plan.coverageEnd)}
+                  </td>
+                </tr>{" "}
+                <tr className="border-b border-gray-100">
+                  <th className={tableLabel}>Annual Benefit Limit</th>
+                  <td className={tableValue}>
+                    {hidden(money(plan.annualBenefitLimit))}
+                  </td>
+                </tr>{" "}
+                <tr>
+                  <th className={tableLabel}>Status</th>
+                  <td className={tableValue}>
+                    <span
+                      className={`inline-flex rounded-full px-3 py-1 text-[11px] font-semibold ${plan.status === "Active" ? "bg-emerald-100 text-emerald-800" : "bg-gray-100 text-gray-700"}`}
+                    >
+                      {plan.status}
+                    </span>
+                  </td>
+                </tr>{" "}
+              </tbody>
+            </table>
+          </div>{" "}
+        </div>{" "}
+      </Card>{" "}
+      <Card className="p-4 sm:p-5">
+        {" "}
+        <div className="mb-4">
+          <h2 className={sectionTitle}>Contribution Policy</h2>
+          <p className={`mt-1 ${muted}`}>
+            Premium sharing between the company and employee, based on the saved
+            plan contribution percentages and company-sponsored dependent
+            policy.
+          </p>
+        </div>{" "}
+        <div className="grid gap-4 lg:grid-cols-2">
+          {" "}
+          <div className="rounded-xl border border-gray-100 bg-gray-50 p-4">
+            {" "}
+            <h3 className="m-0 text-[14px] font-semibold text-gray-900">
+              Employee's Own HMO Premium
+            </h3>
+            <p className={`mt-1 ${muted}`}>Monthly premium for the employee.</p>{" "}
+            <div className="mt-4 text-2xl font-bold text-gray-900">
+              {hidden(money(plan.employeeMonthlyPremium))}
+              <span className="ml-1 text-[12px] font-medium text-gray-500">
+                / month
+              </span>
+            </div>{" "}
+            <div className="mt-3 h-2 overflow-hidden rounded-full bg-gray-200">
+              <div
+                className="h-full bg-blue-500"
+                style={{
+                  width: `${Math.max(0, Math.min(100, plan.employeeCompanyShare ?? 0))}%`,
+                }}
+              />
+            </div>{" "}
+            <div className="mt-3 grid grid-cols-2 gap-3">
+              <div>
+                <div className={muted}>Employee Share</div>
+                <div className="mt-1 text-[13px] font-semibold text-gray-900">
+                  {contribution(
+                    plan.employeeMonthlyPremium,
+                    plan.employeeMemberShare,
+                  )}
+                </div>
+              </div>
+              <div className="text-right">
+                <div className={muted}>Company Share</div>
+                <div className="mt-1 text-[13px] font-semibold text-gray-900">
+                  {contribution(
+                    plan.employeeMonthlyPremium,
+                    plan.employeeCompanyShare,
+                  )}
+                </div>
+              </div>
+            </div>{" "}
+          </div>{" "}
+          <div className="rounded-xl border border-gray-100 bg-white p-4">
+            {" "}
+            <h3 className="m-0 text-[14px] font-semibold text-gray-900">
+              Dependent Premiums
+            </h3>
+            <p className={`mt-1 ${muted}`}>
+              One eligible spouse or child is company-sponsored; additional
+              eligible dependents are employee-paid.
+            </p>{" "}
+            <div className="mt-3 rounded-lg border border-emerald-100 bg-emerald-50 p-3">
+              <div className="flex flex-wrap items-start justify-between gap-2">
+                <div>
+                  <div className="text-[12px] font-semibold text-[#14532d]">
+                    One eligible sponsored dependent
+                  </div>
+                  <div className="mt-1 text-[11px] text-[#166534]">
+                    First eligible spouse or child · company-paid 100%
+                  </div>
+                </div>
+                <div className="text-right">
+                  <div className="text-[13px] font-bold text-[#14532d]">
+                    Company-paid
+                  </div>
+                  <div className="text-[11px] text-[#166534]">
+                    No employee premium
+                  </div>
+                </div>
+              </div>
+            </div>{" "}
+            <div className="mt-2 rounded-lg border border-amber-100 bg-amber-50 p-3">
+              <div className="flex flex-wrap items-start justify-between gap-2">
+                <div>
+                  <div className="text-[12px] font-semibold text-[#713f12]">
+                    Additional eligible dependents
+                  </div>
+                  <div className="mt-1 text-[11px] text-[#854d0e]">
+                    Subject to provider eligibility and plan terms
+                  </div>
+                </div>
+                <div className="text-right">
+                  <div className="text-[13px] font-bold text-[#713f12]">
+                    {hidden(money(plan.dependentMonthlyPremium))}
+                  </div>
+                  <div className="text-[11px] text-[#854d0e]">
+                    Employee-paid premium
+                  </div>
+                </div>
+              </div>
+            </div>{" "}
+            <p className={`mt-3 ${muted}`}>
+              Configured additional-dependent premium:{" "}
+              {hidden(money(plan.dependentMonthlyPremium))}.
+            </p>{" "}
+          </div>{" "}
+        </div>{" "}
+      </Card>{" "}
+    </div>
+  );
+}
+function EnrollmentSection({
+  enrollments,
+  plans,
+  employeeMap,
+  onChanged,
+}: {
+  enrollments: HmoEnrollment[];
+  plans: HmoPlan[];
+  employeeMap: Map<string, Employee>;
+  onChanged: () => void;
+}) {
+  const [selectedEnrollment, setSelectedEnrollment] = useState<HmoEnrollment | null>(null);
+  const [view, setView] = useState<"all" | "action">("all");
+  const actionCount = enrollments.filter((e) => needsAction(enrollmentDisplayStatus(e))).length;
+  const shown = view === "action" ? enrollments.filter((e) => needsAction(enrollmentDisplayStatus(e))) : enrollments;
+  // Inactive or resigned employees whose coverage is still open: Maxicare keeps billing until HR terminates it.
+  const leavers = enrollments.filter((e) => {
+    const employee = employeeMap.get(e.employeeId);
+    return ["Pending", "Submitted", "Active"].includes(e.status) && Boolean(employee && (employee.status === "Inactive" || employee.employmentStatus === "Resigned"));
+  });
+  return (
+    <>
+      {leavers.length > 0 && (
+        <p role="alert" className="mb-0 mt-4 rounded-xl border border-amber-200 bg-amber-50 p-3 text-[12px] text-amber-800">
+          {leavers.length === 1 ? "1 employee who is" : `${leavers.length} employees who are`} no longer active still {leavers.length === 1 ? "has" : "have"} open HMO coverage: {leavers.map((e) => employeeMap.get(e.employeeId)?.name).join(", ")}. Open each enrollment and terminate it so Maxicare coverage and billing stop.
+        </p>
+      )}
+      <div className="mt-4"><Segmented label="Enrollments shown" value={view} onChange={setView} options={[{ id: "all", label: `All (${enrollments.length})` }, { id: "action", label: `Needs action (${actionCount})` }]} /></div>
+      <Card className="mt-3 overflow-x-auto">
+      <table className="w-full min-w-[1120px] text-left text-[13px]">
+        <thead>
+          <tr className="border-b border-gray-100 text-[11px] uppercase tracking-wide text-gray-500">
+            {[
+              "Employee",
+              "Plan",
+              "Eligibility Date",
+              "Coverage Starts",
+              "Coverage Ends",
+              "Enrollment Status",
+              "Action",
+            ].map((h) => (
+              <th key={h} className="px-4 py-3">
+                {h}
+              </th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {shown.length === 0 ? (
+            <tr>
+              <td colSpan={7}>
+                <Empty>{view === "action" ? "Nothing needs action: no request is overdue at Maxicare or not accepted." : "No HMO enrollments yet."}</Empty>
+              </td>
+            </tr>
+          ) : (
+            shown.map((e) => {
+              const employee = employeeMap.get(e.employeeId);
+              const eligibilityDate = employee ? hmoEligibilityDate(employee.dateHired) : e.eligibilityDate;
+              const eligibleForEffectiveDate = employee
+                ? isHmoEmployeeEligible(employee, e.effectiveDate)
+                : e.employeeEligibleForEffectiveDate;
+              const eligibilityDetail = eligibilityDate
+                ? eligibleForEffectiveDate === true
+                  ? "Eligible on coverage start"
+                  : e.effectiveDate < eligibilityDate
+                    ? "Coverage starts before eligibility"
+                    : eligibleForEffectiveDate === false
+                      ? "Employee not active for coverage start"
+                      : "Eligibility not verified"
+                : "Hire date unavailable; eligibility cannot be calculated";
+              return <tr key={e.id} className="border-b border-gray-100">
+                <td className="px-4 py-3 font-semibold">
+                  {employeeMap.get(e.employeeId)?.name ?? e.employeeId}
+                </td>
+                <td className="px-4 py-3">
+                  {plans.find((p) => p.id === e.planId)?.name ?? "Unavailable"}
+                </td>
+                <td className="px-4 py-3">
+                  <div className="font-medium text-gray-900">{formatHmoDate(eligibilityDate)}</div>
+                  <div className={`mt-1 max-w-[210px] text-[11px] leading-snug ${eligibilityDate ? "text-gray-500" : "text-amber-700"}`}>{eligibilityDetail}</div>
+                </td>
+                <td className="px-4 py-3 whitespace-nowrap">{formatHmoDate(e.effectiveDate)}</td>
+                <td className="px-4 py-3">
+                  {formatHmoDate(e.expirationDate)}
+                </td>
+                <td className="px-4 py-3">
+                  <StatusBadge status={enrollmentDisplayStatus(e)}/>
+                </td>
+                <td className="px-4 py-3">
+                  <button
+                    type="button"
+                    className="font-semibold text-blue-600 hover:text-blue-800"
+                    onClick={() => setSelectedEnrollment(e)}
+                  >
+                    View
+                  </button>
+                </td>
+              </tr>;
+            })
+          )}
+        </tbody>
+      </table>
+      </Card>
+      {selectedEnrollment && (
+        <EnrollmentViewModal
+          enrollment={selectedEnrollment}
+          employee={employeeMap.get(selectedEnrollment.employeeId)}
+          plan={plans.find((p) => p.id === selectedEnrollment.planId)}
+          onClose={() => setSelectedEnrollment(null)}
+          onChanged={() => { setSelectedEnrollment(null); onChanged(); }}
+        />
+      )}
+    </>
+  );
+}
+
+// Maxicare is not connected to PBMS. HR sends each approved request to Maxicare and enters the answer Maxicare sends back
+// (the member ID, or the reason it was not accepted); PBMS shows who entered it and never a Maxicare decision of its own.
+type MaxicareRequest = Pick<HmoEnrollment, "approvalStatus" | "rejectionReason" | "maxicareReference" | "maxicareActivatedAt" | "maxicareSubmittedAt" | "maxicareAnsweredAt" | "maxicareAnsweredByName"> & { maxicareStatus?: HmoEnrollment["maxicareStatus"] };
+const holidayDates = () => loadHolidays().map((holiday) => holiday.date);
+const followUpDue = (request: MaxicareRequest) => maxicareFollowUpDue(request.maxicareStatus, request.maxicareSubmittedAt, manilaToday(), holidayDates());
+const waitingStatus = (request: MaxicareRequest) => (followUpDue(request) ? "Follow up with Maxicare" : "Waiting for Maxicare");
+/** Statuses HR has to act on: no answer from Maxicare in time, or not accepted by Maxicare. */
+const needsAction = (status: string) => status === "Follow up with Maxicare" || status === "Not accepted by Maxicare";
+const manilaDay = (iso?: string | null) => (iso ? formatHmoDate(manilaToday(new Date(iso))) : "—");
+
+/** Where a request stands with Maxicare, as entered by HR. */
+function MaxicareDetails({ request }: { request: MaxicareRequest }) {
+  const by = (verb: string, at?: string | null) => `${verb}${request.maxicareAnsweredByName ? ` by ${request.maxicareAnsweredByName}` : ""} on ${manilaDay(at)}`;
+  if (request.approvalStatus !== "Approved") return null;
+  if (request.maxicareStatus === "Pending") {
+    const due = followUpDue(request);
+    const waited = request.maxicareSubmittedAt ? workingDaysBetween(manilaToday(new Date(request.maxicareSubmittedAt)), manilaToday(), holidayDates()) : null;
+    return (
+      <div className={`rounded-xl border p-3 ${due ? "border-amber-200 bg-amber-50 text-amber-900" : "border-blue-100 bg-blue-50 text-blue-900"}`}>
+        <div className="text-[11px] font-semibold uppercase tracking-wide">{waitingStatus(request)}</div>
+        <div className="mt-1">
+          {request.maxicareSubmittedAt ? `Sent to Maxicare on ${manilaDay(request.maxicareSubmittedAt)}, ${waited === 1 ? "1 working day" : `${waited} working days`} ago.` : "Sent to Maxicare."}
+          {due ? ` No answer after ${MAXICARE_FOLLOW_UP_WORKING_DAYS} working days: contact Maxicare.` : ""}
+        </div>
+        <div className="mt-1 text-[12px]">When Maxicare answers, enter its member ID with Confirm Enrollment, or use Not Accepted by Maxicare.</div>
+      </div>
+    );
+  }
+  if (request.maxicareStatus === "Active")
+    return (
+      <div className="grid gap-3 sm:grid-cols-2">
+        <div><div className="text-[11px] text-gray-500">Maxicare Member ID / Card No.</div><div className="font-medium">{request.maxicareReference ?? "—"}</div></div>
+        <div><div className="text-[11px] text-gray-500">Enrollment Confirmed</div><div className="font-medium">{by("Confirmed", request.maxicareAnsweredAt ?? request.maxicareActivatedAt)}</div></div>
+      </div>
+    );
+  if (request.maxicareStatus === "Rejected")
+    return (
+      <div className="rounded-xl border border-red-200 bg-red-50 p-3 text-red-700">
+        <div className="text-[11px] font-semibold uppercase tracking-wide">Not accepted by Maxicare</div>
+        <div className="mt-1">{request.rejectionReason ?? "No reason entered."}</div>
+        <div className="mt-1 text-[12px]">{by("Entered", request.maxicareAnsweredAt)}. Correct the request with Maxicare, then mark it as sent again.</div>
+      </div>
+    );
+  return null;
+}
+
+function enrollmentDisplayStatus(enrollment: HmoEnrollment) {
+  if (enrollment.status === "Terminated") return "Terminated";
+  if (enrollment.status === "Expired") return "Expired";
+  if (enrollment.status === "Rejected" || enrollment.approvalStatus === "Rejected") return "Rejected";
+  if (enrollment.status === "Active" && enrollment.maxicareStatus === "Active") return "Enrolled";
+  if (enrollment.approvalStatus === "Approved" && enrollment.maxicareStatus === "Pending") return waitingStatus(enrollment);
+  if (enrollment.approvalStatus === "Approved" && enrollment.maxicareStatus === "Rejected") return "Not accepted by Maxicare";
+  if (enrollment.approvalStatus === "Approved") return "Ready to send to Maxicare";
+  return "Pending Admin Approval";
+}
+
+function EnrollmentViewModal({
+  enrollment,
+  employee,
+  plan,
+  onClose,
+  onChanged,
+}: {
+  enrollment: HmoEnrollment;
+  employee?: Employee;
+  plan?: HmoPlan;
+  onClose: () => void;
+  onChanged: () => void;
+}) {
+  const pending = enrollment.approvalStatus === "Pending" && ["Pending", "Submitted"].includes(enrollment.status);
+  const name = employee?.name ?? "this employee";
+  const mine = pending && submittedByUser(enrollment.submittedBy, getCurrentUser()?.id);
+  const steps: WorkflowStep[] = [
+    ...(mine ? [
+      { key: "cancel", label: "Cancel Request", danger: true, confirm: `Cancel this request for ${name}? It can be added again.`, run: () => hmoService.cancelEnrollment(enrollment.id), audit: `Cancelled the HMO enrollment request of ${name}.` },
+    ] : []),
+    ...(pending && !mine ? [
+      { key: "approve", label: "Approve Enrollment", permission: "hmo.approve" as const, run: () => hmoService.approveEnrollment(enrollment.id), audit: `Approved the HMO enrollment of ${name}.` },
+      { key: "reject", label: "Reject", danger: true, permission: "hmo.approve" as const, needs: "reason" as const, run: (reason: string) => hmoService.rejectEnrollment(enrollment.id, reason), audit: `Rejected the HMO enrollment of ${name}.` },
+    ] : []),
+    ...(enrollment.approvalStatus === "Approved" && ["Not Submitted", "Rejected"].includes(enrollment.maxicareStatus) && ["Pending", "Submitted"].includes(enrollment.status) ? [
+      { key: "submit", label: enrollment.maxicareStatus === "Rejected" ? "Mark as Sent Again" : "Mark as Sent to Maxicare", confirm: `Mark ${name}'s request as sent to Maxicare? Send it to Maxicare first (email or Maxicare portal); PBMS does not send it.`, run: () => hmoService.submitEnrollmentToMaxicare(enrollment.id), audit: `Marked the HMO enrollment of ${name} as sent to Maxicare.` },
+    ] : []),
+    ...(enrollment.approvalStatus === "Approved" && enrollment.maxicareStatus === "Pending" && ["Pending", "Submitted"].includes(enrollment.status) ? [
+      { key: "activate", label: "Confirm Enrollment", needs: "reference" as const, memberCheck: { employeeId: enrollment.employeeId, recordId: enrollment.id }, field: "Maxicare member ID / card no.", placeholder: "From Maxicare's confirmation email or card", run: (reference: string, _reason?: string, allowShared?: boolean) => hmoService.activateEnrollment(enrollment.id, reference, allowShared), audit: `Confirmed the HMO enrollment of ${name} with the member ID from Maxicare's confirmation.` },
+      { key: "maxicare-reject", label: "Not Accepted by Maxicare", danger: true, needs: "reason" as const, field: "Reason given by Maxicare", run: (reason: string) => hmoService.recordEnrollmentMaxicareRejection(enrollment.id, reason), audit: `Entered that Maxicare did not accept the HMO enrollment of ${name}.` },
+    ] : []),
+    ...(enrollment.maxicareStatus === "Active" ? [
+      { key: "correct", label: "Correct Member ID", needs: "correction" as const, memberCheck: { employeeId: enrollment.employeeId, recordId: enrollment.id }, field: "Correct member ID", placeholder: "From Maxicare's confirmation email or card", run: (reference: string, reason = "", allowShared?: boolean) => hmoService.correctEnrollmentMemberId(enrollment.id, reference, reason, allowShared), audit: `Corrected the Maxicare member ID of ${name}.` },
+    ] : []),
+    // A pending enrollment is rejected rather than terminated.
+    ...(!pending && enrollment.approvalStatus === "Approved" && ["Pending", "Submitted", "Active"].includes(enrollment.status) ? [
+      { key: "terminate", label: "Terminate", danger: true, confirm: `End ${name}'s HMO coverage? Their dependents can no longer be changed under this enrollment.`, run: () => hmoService.terminateEnrollment(enrollment.id), audit: `Terminated the HMO enrollment of ${name}.` },
+    ] : []),
+  ];
+  return (
+    <Modal title="Enrollment Details" onClose={onClose}>
+      <div className="grid gap-3 text-[13px] text-gray-900">
+        <div className="rounded-xl border border-gray-100 bg-gray-50 p-3">
+          <div className="text-[11px] uppercase tracking-wide text-gray-500">Enrollment Status</div>
+          <div className="mt-1 font-semibold">{enrollmentDisplayStatus(enrollment)}</div>
+        </div>
+        <div className="grid gap-3 sm:grid-cols-2">
+          <div><div className="text-[11px] text-gray-500">Employee</div><div className="font-medium">{employee?.name ?? enrollment.employeeId}</div></div>
+          <div><div className="text-[11px] text-gray-500">Plan</div><div className="font-medium">{plan?.name ?? "Unavailable"}</div></div>
+          <div><div className="text-[11px] text-gray-500">Eligibility Date</div><div className="font-medium">{formatHmoDate(enrollment.eligibilityDate)}</div></div>
+          <div><div className="text-[11px] text-gray-500">Coverage Period</div><div className="font-medium">{formatHmoDate(enrollment.effectiveDate)} – {formatHmoDate(enrollment.expirationDate)}</div></div>
+        </div>
+        <MaxicareDetails request={enrollment} />
+        {enrollment.rejectionReason && enrollment.maxicareStatus !== "Rejected" && <div className="rounded-xl border border-red-200 bg-red-50 p-3 text-red-700"><div className="text-[11px] font-semibold uppercase tracking-wide">Rejection Reason</div><div className="mt-1">{enrollment.rejectionReason}</div></div>}
+      </div>
+      <WorkflowActions steps={steps} waiting={mine ? ownRequestWaiting() : undefined} onDone={onChanged} onClose={onClose} />
+    </Modal>
+  );
+}
+function DependentSection({
+  dependents,
+  enrollments,
+  employeeMap,
+  onChanged,
+}: {
+  dependents: HmoDependent[];
+  enrollments: HmoEnrollment[];
+  employeeMap: Map<string, Employee>;
+  onChanged: () => void;
+}) {
+  const [selectedDependent, setSelectedDependent] = useState<HmoDependent | null>(null);
+  const [view, setView] = useState<"all" | "action">("all");
+  const actionCount = dependents.filter((d) => needsAction(dependentDisplayStatus(d))).length;
+  const shown = view === "action" ? dependents.filter((d) => needsAction(dependentDisplayStatus(d))) : dependents;
+  const hasActiveEnrollment = enrollments.some(
+    (enrollment) =>
+      enrollment.status === "Active" &&
+      enrollment.approvalStatus === "Approved" &&
+      enrollment.maxicareStatus === "Active",
+  );
+  return (
+    <>
+    {!hasActiveEnrollment && (
+      <div className="mt-4 rounded-xl border border-amber-200 bg-amber-50 p-4 text-[12px] text-amber-900">
+        Dependents can be added only after the employee is <b>Enrolled</b>, which HR confirms with the member ID from Maxicare's confirmation. Open the employee's enrollment and use <b>View</b> to approve or confirm it first.
+      </div>
+    )}
+    <div className="mt-4"><Segmented label="Dependents shown" value={view} onChange={setView} options={[{ id: "all", label: `All (${dependents.length})` }, { id: "action", label: `Needs action (${actionCount})` }]} /></div>
+    <Card className="mt-3 overflow-x-auto">
+      <table className="w-full min-w-[1050px] text-left text-[13px]">
+        <thead>
+          <tr className="border-b border-gray-100 text-[11px] uppercase tracking-wide text-gray-500">
+            {[
+              "Employee",
+              "Dependent Name",
+              "Relationship",
+              "Date of Birth",
+              "Sponsorship",
+              "Employee Premium",
+              "Company Premium",
+              "Enrollment Status",
+              "Action",
+            ].map((h) => (
+              <th key={h} className="px-4 py-3">
+                {h}
+              </th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {shown.length === 0 ? (
+            <tr>
+              <td colSpan={9}>
+                <Empty>{view === "action" ? "Nothing needs action: no request is overdue at Maxicare or not accepted." : "No dependents enrolled."}</Empty>
+              </td>
+            </tr>
+          ) : (
+            shown.map((d) => {
+              const e = enrollments.find((x) => x.id === d.enrollmentId);
+              return (
+                <tr key={d.id} className="border-b border-gray-100">
+                  <td className="px-4 py-3">
+                    {e
+                      ? (employeeMap.get(e.employeeId)?.name ?? e.employeeId)
+                      : "Unavailable"}
+                  </td>
+                  <td className="px-4 py-3 font-semibold">{d.name}</td>
+                  <td className="px-4 py-3">{d.relationship}</td>
+                  <td className="px-4 py-3">
+                    {formatHmoDate(d.dateOfBirth)}
+                  </td>
+                  <td className="px-4 py-3">
+                    {d.companySponsored ? "Company-sponsored" : "Employee-paid"}
+                  </td>
+                  <td className="px-4 py-3">{money(d.employeeShare)}</td>
+                  <td className="px-4 py-3">{money(d.companyShare)}</td>
+                  <td className="px-4 py-3">
+                    <StatusBadge status={dependentDisplayStatus(d)}/>
+                    <div className="mt-1 text-[11px] text-gray-500">
+                      {d.eligibilityStatus}
+                    </div>
+                  </td>
+                  <td className="px-4 py-3">
+                    <button
+                      type="button"
+                      className="font-semibold text-blue-600 hover:text-blue-800"
+                      onClick={() => setSelectedDependent(d)}
+                    >
+                      View
+                    </button>
+                  </td>
+                </tr>
+              );
+            })
+          )}
+        </tbody>
+      </table>
+    </Card>
+    {selectedDependent && (
+      <DependentViewModal
+        dependent={selectedDependent}
+        employee={(() => {
+          const enrollment = enrollments.find((item) => item.id === selectedDependent.enrollmentId);
+          return enrollment ? employeeMap.get(enrollment.employeeId) : undefined;
+        })()}
+        enrollment={enrollments.find((item) => item.id === selectedDependent.enrollmentId)}
+        onClose={() => setSelectedDependent(null)}
+        onChanged={() => { setSelectedDependent(null); onChanged(); }}
+      />
+    )}
+    </>
+  );
+}
+
+function dependentDisplayStatus(dependent: HmoDependent) {
+  if (dependent.status === "Terminated") return "Terminated";
+  if (dependent.status === "Expired") return "Expired";
+  if (dependent.status === "Rejected" || dependent.approvalStatus === "Rejected") return "Rejected";
+  if (dependent.status === "Active" && dependent.maxicareStatus === "Active") return "Enrolled";
+  if (dependent.approvalStatus === "Approved" && dependent.maxicareStatus === "Pending") return waitingStatus(dependent);
+  if (dependent.approvalStatus === "Approved" && dependent.maxicareStatus === "Rejected") return "Not accepted by Maxicare";
+  if (dependent.approvalStatus === "Approved") return "Ready to send to Maxicare";
+  return "Pending Admin Approval";
+}
+
+function DependentViewModal({
+  dependent,
+  employee,
+  enrollment,
+  onClose,
+  onChanged,
+}: {
+  dependent: HmoDependent;
+  employee?: Employee;
+  enrollment?: HmoEnrollment;
+  onClose: () => void;
+  onChanged: () => void;
+}) {
+  // Every dependent step needs the employee's own coverage to be approved and active with Maxicare.
+  const coverageActive = Boolean(enrollment && enrollment.status === "Active" && enrollment.approvalStatus === "Approved" && enrollment.maxicareStatus === "Active");
+  const pending = dependent.approvalStatus === "Pending" && ["Pending", "Submitted"].includes(dependent.status);
+  const open = !["Terminated", "Rejected", "Expired"].includes(dependent.status);
+  const name = dependent.name;
+  // A confirmed member ID can be corrected even after the employee's coverage has ended.
+  const memberCheck = enrollment ? { employeeId: enrollment.employeeId, recordId: dependent.id } : undefined;
+  const correction: WorkflowStep[] = dependent.maxicareStatus === "Active" ? [
+    { key: "correct", label: "Correct Member ID", needs: "correction", memberCheck, field: "Correct member ID", placeholder: "From Maxicare's confirmation email or card", run: (reference: string, reason = "", allowShared?: boolean) => hmoService.correctDependentMemberId(dependent.id, reference, reason, allowShared), audit: `Corrected the Maxicare member ID of HMO dependent ${name}.` },
+  ] : [];
+  const mine = pending && submittedByUser(dependent.submittedBy, getCurrentUser()?.id);
+  const cancel: WorkflowStep[] = mine ? [
+    { key: "cancel", label: "Cancel Request", danger: true, confirm: `Cancel this request for ${name}? It can be added again.`, run: () => hmoService.cancelDependent(dependent.id), audit: `Cancelled the HMO dependent request of ${name}.` },
+  ] : [];
+  const steps: WorkflowStep[] = !coverageActive ? [...correction, ...cancel] : [
+    ...correction,
+    ...cancel,
+    ...(pending && !mine ? [
+      { key: "approve", label: "Approve Dependent", permission: "hmo.approve" as const, run: () => hmoService.approveDependent(dependent.id), audit: `Approved HMO dependent ${name}.` },
+      { key: "reject", label: "Reject", danger: true, permission: "hmo.approve" as const, needs: "reason" as const, run: (reason: string) => hmoService.rejectDependent(dependent.id, reason), audit: `Rejected HMO dependent ${name}.` },
+    ] : []),
+    ...(open && dependent.approvalStatus === "Approved" && ["Not Submitted", "Rejected"].includes(dependent.maxicareStatus ?? "Not Submitted") ? [
+      { key: "submit", label: dependent.maxicareStatus === "Rejected" ? "Mark as Sent Again" : "Mark as Sent to Maxicare", confirm: `Mark ${name}'s request as sent to Maxicare? Send it to Maxicare first (email or Maxicare portal); PBMS does not send it.`, run: () => hmoService.submitDependentToMaxicare(dependent.id), audit: `Marked HMO dependent ${name} as sent to Maxicare.` },
+    ] : []),
+    ...(open && dependent.approvalStatus === "Approved" && dependent.maxicareStatus === "Pending" && dependent.status !== "Active" ? [
+      { key: "activate", label: "Confirm Enrollment", needs: "reference" as const, memberCheck, field: "Maxicare member ID / card no.", placeholder: "From Maxicare's confirmation email or card", run: (reference: string, _reason?: string, allowShared?: boolean) => hmoService.activateDependent(dependent.id, reference, allowShared), audit: `Confirmed HMO dependent ${name} with the member ID from Maxicare's confirmation.` },
+      { key: "maxicare-reject", label: "Not Accepted by Maxicare", danger: true, needs: "reason" as const, field: "Reason given by Maxicare", run: (reason: string) => hmoService.recordDependentMaxicareRejection(dependent.id, reason), audit: `Entered that Maxicare did not accept HMO dependent ${name}.` },
+    ] : []),
+    // A pending dependent is rejected rather than terminated.
+    ...(!pending && dependent.approvalStatus === "Approved" && ["Active", "Submitted"].includes(dependent.status) ? [
+      { key: "terminate", label: "Terminate", danger: true, confirm: `End HMO coverage for ${name}?`, run: () => hmoService.terminateDependent(dependent.id), audit: `Terminated HMO dependent ${name}.` },
+    ] : []),
+  ];
+  return (
+    <Modal title="Dependent Details" onClose={onClose}>
+      <div className="grid gap-3 text-[13px] text-gray-900">
+        <div className="rounded-xl border border-gray-100 bg-gray-50 p-3">
+          <div className="text-[11px] uppercase tracking-wide text-gray-500">Enrollment Status</div>
+          <div className="mt-1 font-semibold">{dependentDisplayStatus(dependent)}</div>
+        </div>
+        <div className="grid gap-3 sm:grid-cols-2">
+          <div><div className="text-[11px] text-gray-500">Employee</div><div className="font-medium">{employee?.name ?? "Unavailable"}</div></div>
+          <div><div className="text-[11px] text-gray-500">Dependent</div><div className="font-medium">{dependent.name}</div></div>
+          <div><div className="text-[11px] text-gray-500">Relationship</div><div className="font-medium">{dependent.relationship}</div></div>
+          <div><div className="text-[11px] text-gray-500">Date of Birth</div><div className="font-medium">{formatHmoDate(dependent.dateOfBirth)}</div></div>
+          <div><div className="text-[11px] text-gray-500">Coverage Period</div><div className="font-medium">{formatHmoDate(dependent.effectiveDate)} – {formatHmoDate(dependent.expirationDate ?? enrollment?.expirationDate)}</div></div>
+          <div><div className="text-[11px] text-gray-500">Sponsorship</div><div className="font-medium">{dependent.companySponsored ? "Company-sponsored" : "Employee-paid"}</div></div>
+        </div>
+        <MaxicareDetails request={dependent} />
+        {dependent.rejectionReason && dependent.maxicareStatus !== "Rejected" && <div className="rounded-xl border border-red-200 bg-red-50 p-3 text-red-700"><div className="text-[11px] font-semibold uppercase tracking-wide">Rejection Reason</div><div className="mt-1">{dependent.rejectionReason}</div></div>}
+        {!coverageActive && open && <p className="m-0 rounded-xl border border-amber-200 bg-amber-50 p-3 text-[12px] text-amber-800">The employee must be Enrolled (approved and confirmed with Maxicare's member ID) before this dependent can be reviewed.</p>}
+      </div>
+      <WorkflowActions steps={steps} waiting={mine ? ownRequestWaiting() : undefined} onDone={onChanged} onClose={onClose} />
+    </Modal>
+  );
+}
+
+/** Shown on a request the signed-in user added: another person has to decide it. */
+const ownRequestWaiting = () => can("hmo.approve") ? "Waiting for another Admin to approve this request." : "Waiting for an Admin to approve this request.";
+// Approve and Reject need hmo.approve (Admin); every other step needs hmo.manage (HR Staff).
+type WorkflowStep = { key: string; label: string; permission?: "hmo.approve" | "hmo.manage"; danger?: boolean; needs?: "reason" | "reference" | "correction"; memberCheck?: { employeeId: string; recordId: string }; field?: string; placeholder?: string; confirm?: string; audit: string; run: (value: string, reason?: string, allowShared?: boolean) => Promise<unknown> };
+/** Everyone with a saved Maxicare member ID, to check an ID while it is typed. The server checks again when it is saved. */
+async function loadMemberIds() {
+  const [enrollments, dependents, employees] = await Promise.all([hmoService.enrollments(), hmoService.dependents(), employeeService.getAll()]);
+  const employeeOf = new Map(enrollments.map((item) => [item.id, item.employeeId]));
+  return [
+    ...enrollments.filter((item) => item.maxicareReference).map((item) => ({ id: item.id, employee_id: item.employeeId, maxicare_reference: item.maxicareReference, name: employees.find((employee) => employee.id === item.employeeId)?.name ?? "another employee" })),
+    ...dependents.filter((item) => item.maxicareReference).map((item) => ({ id: item.id, employee_id: employeeOf.get(item.enrollmentId) ?? "", maxicare_reference: item.maxicareReference, name: item.name })),
+  ];
+}
+/** Action buttons for an HMO record. Steps that need a reason, a Maxicare member ID or a confirmation open an inline
+ * form first; the others run on click. Errors from the server stay visible in the dialog. */
+function WorkflowActions({ steps, waiting, onDone, onClose }: { steps: WorkflowStep[]; waiting?: string; onDone: () => void; onClose: () => void }) {
+  const [active, setActive] = useState<WorkflowStep | null>(null),
+    [value, setValue] = useState(""),
+    [reason, setReason] = useState(""),
+    [saving, setSaving] = useState(false),
+    [error, setError] = useState(""),
+    [members, setMembers] = useState<Awaited<ReturnType<typeof loadMemberIds>>>([]),
+    [reload, setReload] = useState(0);
+  const checking = active?.memberCheck;
+  useEffect(() => {
+    if (!checking) return;
+    let current = true;
+    loadMemberIds().then((rows) => { if (current) setMembers(rows); }).catch(() => undefined);
+    return () => { current = false; };
+  }, [checking?.recordId, reload]);
+  const check = checking ? memberIdCheck(value.trim(), checking.employeeId, checking.recordId, members) : { other: null, family: null };
+  const incomplete = (step: WorkflowStep) => Boolean((step.needs && !value.trim()) || (step.needs === "correction" && !reason.trim()) || check.other);
+  const run = async (step: WorkflowStep) => {
+    if (incomplete(step)) return;
+    setSaving(true);
+    setError("");
+    try {
+      await step.run(value.trim(), reason.trim(), Boolean(check.family));
+      recordAudit({ action: step.label, module: "HMO & Benefits", description: step.audit });
+      onDone();
+    } catch (cause) {
+      setError(cause instanceof Error && cause.message ? cause.message : "The HMO record could not be updated.");
+      setSaving(false);
+      // Someone may have saved this member ID meanwhile: the message under the field catches up.
+      setReload((count) => count + 1);
+    }
+  };
+  const open = (step: WorkflowStep) => { setError(""); setValue(""); setReason(""); if (step.needs || step.confirm) setActive(step); else void run(step); };
+  const allowed = steps.filter((step) => can(step.permission ?? "hmo.manage"));
+  const waitingForAdmin = !allowed.length && steps.some((step) => step.permission === "hmo.approve");
+  return (
+    <>
+      {error && <p role="alert" className="mb-0 mt-4 rounded-lg bg-red-50 p-3 text-[13px] text-red-700">{error}</p>}
+      {active ? (
+        <div className="mt-5 rounded-xl border border-gray-100 bg-gray-50 p-4">
+          {active.needs === "reason" && <Field label={active.field ?? "Reason for rejection"}><textarea className={`${input} min-h-20`} maxLength={500} autoFocus value={value} onChange={(e) => setValue(e.target.value)} /></Field>}
+          {(active.needs === "reference" || active.needs === "correction") && <Field label={active.field ?? "Maxicare member ID / card no."}><TextInput autoFocus maxLength={100} value={value} onChange={(e) => { setValue(e.target.value); setError(""); }} placeholder={active.placeholder} /></Field>}
+          {check.other && <p role="alert" className="mb-0 mt-2 rounded-lg bg-red-50 p-3 text-[13px] text-red-700">This member ID is already saved for {check.other.name}. Check it against Maxicare's confirmation.</p>}
+          {!check.other && check.family && <p role="status" className="mb-0 mt-2 rounded-lg border border-amber-200 bg-amber-50 p-3 text-[13px] text-amber-800">This member ID is already saved for {check.family.name}, in the same family. Save it only if Maxicare confirmed they share it.</p>}
+          {active.needs === "correction" && <div className="mt-3"><Field label="Reason"><textarea className={`${input} min-h-20`} maxLength={500} value={reason} onChange={(e) => setReason(e.target.value)} /></Field></div>}
+          {active.confirm && <p className="m-0 text-[13px] text-gray-500">{active.confirm}</p>}
+          <div className="mt-4 flex flex-wrap justify-end gap-2">
+            <button type="button" className={ghost} disabled={saving} onClick={() => setActive(null)}>Back</button>
+            <Button className={active.danger ? "!bg-red-600 hover:!bg-red-700" : ""} disabled={saving || incomplete(active)} onClick={() => void run(active)}>{saving ? "Saving…" : check.family ? "Save Anyway" : active.label}</Button>
+          </div>
+        </div>
+      ) : (
+        <div className="mt-6 flex flex-wrap items-center justify-end gap-2">
+          {(waiting || waitingForAdmin) && <p className="m-0 mr-auto text-[12px] text-gray-500">{waiting ?? "Waiting for an Admin to approve or reject this request."}</p>}
+          {allowed.map((step) => step.danger
+            ? <button key={step.key} type="button" className={`${ghost} border-red-200 text-red-700 hover:bg-red-50`} disabled={saving} onClick={() => open(step)}>{step.label}</button>
+            : <Button key={step.key} disabled={saving} onClick={() => open(step)}>{saving ? "Saving…" : step.label}</Button>)}
+          <button type="button" className={ghost} disabled={saving} onClick={onClose}>Close</button>
+        </div>
+      )}
+    </>
+  );
+}
+
+/** Add Plan (empty) and Edit Plan share this form. The employee premium split is fixed by company policy. */
+function PlanFormModal({
+  plan,
+  provider,
+  openDependents = 0,
+  onClose,
+  onSaved,
+}: {
+  plan?: HmoPlan;
+  provider?: HmoProvider;
+  /** Open dependents under this plan, offered the new dependent premium and split when those change. */
+  openDependents?: number;
+  onClose: () => void;
+  onSaved: () => void;
+}) {
+  const [f, setF] = useState(() => plan ? {
+    name: plan.name,
+    start: plan.coverageStart,
+    end: plan.coverageEnd,
+    limit:
+      plan.annualBenefitLimit == null ? "" : String(plan.annualBenefitLimit),
+    employeePremium:
+      plan.employeeMonthlyPremium == null
+        ? ""
+        : String(plan.employeeMonthlyPremium),
+    dependentPremium:
+      plan.dependentMonthlyPremium == null
+        ? ""
+        : String(plan.dependentMonthlyPremium),
+    inpatient: plan.inpatient,
+    outpatient: plan.outpatient,
+    emergency: plan.emergency,
+    preventive: plan.preventiveCare,
+    dental: plan.dental,
+    employeeCompanyShare: String(plan.employeeCompanyShare),
+    employeeMemberShare: String(plan.employeeMemberShare),
+    dependentCompanyShare: String(plan.dependentCompanyShare),
+    dependentMemberShare: String(plan.dependentMemberShare),
+    collectPayroll: plan.collectEmployeeShareViaPayroll,
+    status: plan.status,
+  } : {
+    name: "",
+    start: "",
+    end: "",
+    limit: "",
+    employeePremium: "",
+    dependentPremium: "",
+    inpatient: false,
+    outpatient: false,
+    emergency: false,
+    preventive: false,
+    dental: false,
+    employeeCompanyShare: "100",
+    employeeMemberShare: "0",
+    dependentCompanyShare: "0",
+    dependentMemberShare: "100",
+    collectPayroll: true,
+    status: "Active" as HmoPlan["status"],
+  });
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
+  const [applyToDependents, setApplyToDependents] = useState(true);
+  const dependentTermsChanged = Boolean(plan) && (
+    Number(f.dependentPremium || 0) !== Number(plan?.dependentMonthlyPremium ?? 0) ||
+    Number(f.dependentCompanyShare) !== Number(plan?.dependentCompanyShare) ||
+    Number(f.dependentMemberShare) !== Number(plan?.dependentMemberShare));
+  const offerDependentUpdate = openDependents > 0 && dependentTermsChanged;
+  const save = async () => {
+    setError("");
+    if (!f.name.trim() || !f.start || !f.end) {
+      setError("Plan name and both coverage dates are required.");
+      return;
+    }
+    if (f.end < f.start) {
+      setError("Coverage end date must be on or after the start date.");
+      return;
+    }
+    const numericFields = [
+      f.employeeCompanyShare,
+      f.employeeMemberShare,
+      f.dependentCompanyShare,
+      f.dependentMemberShare,
+    ];
+    if (
+      numericFields.some(
+        (value) =>
+          value.trim() === "" ||
+          !Number.isFinite(Number(value)) ||
+          Number(value) < 0 ||
+          Number(value) > 100,
+      )
+    ) {
+      setError("Contribution percentages must be numbers from 0 to 100.");
+      return;
+    }
+    if (
+      Number(f.employeeCompanyShare) !== 100 ||
+      Number(f.employeeMemberShare) !== 0
+    ) {
+      setError(
+        "Company policy requires the company to pay 100% of the employee’s own HMO premium.",
+      );
+      return;
+    }
+    if (Math.abs(Number(f.dependentCompanyShare) + Number(f.dependentMemberShare) - 100) > 0.001) {
+      setError("The dependent premium company and employee shares must add up to 100%.");
+      return;
+    }
+    if (
+      f.limit.trim() !== "" &&
+      (!Number.isFinite(Number(f.limit)) || Number(f.limit) < 0)
+    ) {
+      setError("Annual benefit limit must be zero or greater.");
+      return;
+    }
+    if (
+      [f.employeePremium, f.dependentPremium].some(
+        (value) =>
+          value.trim() !== "" &&
+          (!Number.isFinite(Number(value)) || Number(value) < 0),
+      )
+    ) {
+      setError("Monthly premiums must be zero or greater.");
+      return;
+    }
+    setSaving(true);
+    try {
+      const values = {
+        name: f.name.trim(),
+        coverageStart: f.start,
+        coverageEnd: f.end,
+        annualBenefitLimit: f.limit.trim() === "" ? null : Number(f.limit),
+        inpatient: f.inpatient,
+        outpatient: f.outpatient,
+        emergency: f.emergency,
+        preventiveCare: f.preventive,
+        dental: f.dental,
+        employeeCompanyShare: Number(f.employeeCompanyShare),
+        employeeMemberShare: Number(f.employeeMemberShare),
+        dependentCompanyShare: Number(f.dependentCompanyShare),
+        dependentMemberShare: Number(f.dependentMemberShare),
+        employeeMonthlyPremium:
+          f.employeePremium.trim() === "" ? null : Number(f.employeePremium),
+        dependentMonthlyPremium:
+          f.dependentPremium.trim() === "" ? null : Number(f.dependentPremium),
+        collectEmployeeShareViaPayroll: f.collectPayroll,
+        status: f.status,
+      };
+      if (plan) await hmoService.updatePlan(plan.id, { providerId: plan.providerId, ...values }, offerDependentUpdate && applyToDependents);
+      else {
+        const p = provider ?? (await hmoService.createProvider({ name: "Maxicare", status: "Active" }));
+        await hmoService.createPlan({ providerId: p.id, ...values });
+      }
+      recordAudit({
+        action: plan ? "Updated HMO plan" : "Created HMO plan",
+        module: "HMO & Benefits",
+        description: `${plan ? "Updated" : "Created"} HMO plan ${f.name.trim()}.`,
+      });
+      onSaved();
+    } catch (err) {
+      console.error("HMO plan update failed", err);
+      setError(
+        err instanceof Error
+          ? err.message
+          : "Unable to save the HMO plan. Please try again.",
+      );
+    } finally {
+      setSaving(false);
+    }
+  };
+  return (
+    <Modal title={plan ? "Edit HMO Plan" : "Add Plan"} onClose={onClose}>
+      {" "}
+      <div className="grid gap-4">
+        {" "}
+        {error && <ErrorAlert>{error}</ErrorAlert>}{" "}
+        <Field label="HMO Provider">
+          <TextInput value="Maxicare" readOnly />
+        </Field>{" "}
+        <Field label="Plan Name">
+          <TextInput
+            value={f.name}
+            onChange={(e) => setF({ ...f, name: e.target.value })}
+            placeholder="Corporate Gold"
+          />
+        </Field>{" "}
+        <div className="grid grid-cols-2 gap-3">
+          {" "}
+          <Field label="Coverage Start">
+            <TextInput
+              type="date"
+              value={f.start}
+              onChange={(e) => setF({ ...f, start: e.target.value })}
+            />
+          </Field>{" "}
+          <Field label="Coverage End">
+            <TextInput
+              type="date"
+              value={f.end}
+              onChange={(e) => setF({ ...f, end: e.target.value })}
+            />
+          </Field>{" "}
+        </div>{" "}
+        <Field label="Annual Benefit Limit">
+          <TextInput
+            type="number"
+            min="0"
+            value={f.limit}
+            onChange={(e) => setF({ ...f, limit: e.target.value })}
+          />
+        </Field>{" "}
+        <div className="grid grid-cols-2 gap-3">
+          {" "}
+          <Field label="Employee Monthly Premium">
+            <TextInput
+              type="number"
+              min="0"
+              value={f.employeePremium}
+              onChange={(e) => setF({ ...f, employeePremium: e.target.value })}
+            />
+          </Field>{" "}
+          <Field label="Dependent Monthly Premium">
+            <TextInput
+              type="number"
+              min="0"
+              value={f.dependentPremium}
+              onChange={(e) => setF({ ...f, dependentPremium: e.target.value })}
+            />
+          </Field>{" "}
+        </div>{" "}
+        <div>
+          <div className="mb-2 text-[13px] font-semibold">
+            Coverage Benefits
+          </div>
+          <div className="grid grid-cols-2 gap-2 text-[12px]">
+            {(
+              [
+                ["inpatient", "Inpatient"],
+                ["outpatient", "Outpatient"],
+                ["emergency", "Emergency"],
+                ["preventive", "Preventive Care"],
+                ["dental", "Dental"],
+              ] as const
+            ).map(([key, label]) => (
+              <label
+                key={key}
+                className="flex items-center gap-2 rounded-lg border border-gray-100 p-3"
+              >
+                <input
+                  type="checkbox"
+                  checked={f[key]}
+                  onChange={(e) => setF({ ...f, [key]: e.target.checked })}
+                />
+                {label}
+              </label>
+            ))}
+          </div>
+        </div>{" "}
+        <div className="rounded-xl border border-gray-100 p-3">
+          <div className="mb-3 text-[13px] font-semibold">
+            Contribution Policy (%)
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            {" "}
+            <Field label="Employee premium — company share">
+              <TextInput
+                type="number"
+                min="0"
+                max="100"
+                value={f.employeeCompanyShare}
+                onChange={(e) =>
+                  setF({ ...f, employeeCompanyShare: e.target.value })
+                }
+              />
+            </Field>{" "}
+            <Field label="Employee premium — employee share">
+              <TextInput
+                type="number"
+                min="0"
+                max="100"
+                value={f.employeeMemberShare}
+                onChange={(e) =>
+                  setF({ ...f, employeeMemberShare: e.target.value })
+                }
+              />
+            </Field>{" "}
+            <Field label="Dependent premium — company share">
+              <TextInput
+                type="number"
+                min="0"
+                max="100"
+                value={f.dependentCompanyShare}
+                onChange={(e) =>
+                  setF({ ...f, dependentCompanyShare: e.target.value })
+                }
+              />
+            </Field>{" "}
+            <Field label="Dependent premium — employee share">
+              <TextInput
+                type="number"
+                min="0"
+                max="100"
+                value={f.dependentMemberShare}
+                onChange={(e) =>
+                  setF({ ...f, dependentMemberShare: e.target.value })
+                }
+              />
+            </Field>{" "}
+          </div>
+          <label className="mt-3 flex items-center gap-2 text-[12px]">
+            <input
+              type="checkbox"
+              checked={f.collectPayroll}
+              onChange={(e) => setF({ ...f, collectPayroll: e.target.checked })}
+            />
+            Collect employee-paid HMO share through payroll
+          </label>
+          <p className="mt-2 text-[11px] text-gray-500">
+            The company must cover 100% of the employee’s own HMO premium. One
+            eligible spouse or child is company-sponsored; other dependents
+            split the dependent premium by the two dependent shares above.
+          </p>
+          {offerDependentUpdate && (
+            <label className="mt-3 flex items-start gap-2 rounded-lg border border-amber-200 bg-amber-50 p-3 text-[12px] text-amber-900">
+              <input type="checkbox" className="mt-0.5" checked={applyToDependents} onChange={(e) => setApplyToDependents(e.target.checked)} />
+              <span>Apply the new dependent premium and shares to the {openDependents === 1 ? "1 current dependent" : `${openDependents} current dependents`} under this plan. Payroll runs already saved keep their amounts.</span>
+            </label>
+          )}
+        </div>{" "}
+        <Field label="Plan Status">
+          <select
+            className={input}
+            value={f.status}
+            onChange={(e) =>
+              setF({ ...f, status: e.target.value as HmoPlan["status"] })
+            }
+          >
+            <option value="Draft">Draft</option>
+            <option value="Active">Active</option>
+            <option value="Expiring">Expiring</option>
+            <option value="Expired">Expired</option>
+            <option value="Archived">Archived</option>
+          </select>
+        </Field>{" "}
+      </div>{" "}
+      <div className="mt-6 flex justify-end gap-2">
+        <button className={ghost} onClick={onClose} disabled={saving}>
+          Cancel
+        </button>
+        <Button
+          disabled={saving || !f.name.trim() || !f.start || !f.end}
+          onClick={() => void save()}
+        >
+          {saving ? "Saving…" : plan ? "Save Changes" : "Add Plan"}
+        </Button>
+      </div>{" "}
+    </Modal>
+  );
+}
+function EnrollmentModal({
+  employees,
+  enrollments,
+  plans,
+  onClose,
+  onSaved,
+}: {
+  employees: Employee[];
+  enrollments: HmoEnrollment[];
+  plans: HmoPlan[];
+  onClose: () => void;
+  onSaved: () => void;
+}) {
+  const [f, setF] = useState({
+    planId: plans.length === 1 ? plans[0].id : "",
+    employeeId: "",
+    effective: today(),
+    expiration: plans.length === 1 ? plans[0].coverageEnd : "",
+  });
+  const plan = plans.find((item) => item.id === f.planId);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
+  const eligibleEmployeeChoices = employees.filter(
+    (employee) => employee.status === "Active" && employee.employmentStatus?.toLowerCase() !== "resigned" && !hasOpenHmoEnrollment(employee.id, enrollments),
+  );
+  const selectedEmployee = eligibleEmployeeChoices.find((employee) => employee.id === f.employeeId);
+  const eligibilityDate = selectedEmployee ? hmoEligibilityDate(selectedEmployee.dateHired) : null;
+  const eligibleForEffectiveDate = Boolean(selectedEmployee && isHmoEmployeeEligible(selectedEmployee, f.effective));
+  const withinPlanDates = Boolean(plan && f.effective >= plan.coverageStart && f.effective <= plan.coverageEnd);
+  const validExpiration = !f.expiration || Boolean(plan && f.expiration >= f.effective && f.expiration <= plan.coverageEnd);
+  const save = async () => {
+    if (!f.employeeId || !plan || !eligibleForEffectiveDate || !withinPlanDates || !validExpiration || saving) return;
+    setSaving(true);
+    setError("");
+    try {
+      await hmoService.createEnrollment({
+        planId: plan.id,
+        employeeId: f.employeeId,
+        effectiveDate: f.effective,
+        expirationDate: f.expiration || null,
+        status: "Submitted",
+      });
+      recordAudit({
+        action: "Submitted HMO enrollment",
+        module: "HMO & Benefits",
+        description: `Submitted HMO enrollment for employee ${f.employeeId}.`,
+      });
+      onSaved();
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "The HMO enrollment could not be submitted.");
+    } finally {
+      setSaving(false);
+    }
+  };
+  return (
+    <Modal title="Enroll Employee" onClose={onClose}>
+      <div className="grid gap-4">
+        <Field label="Plan">
+          <select
+            className={input}
+            value={f.planId}
+            onChange={(e) => {
+              const next = plans.find((item) => item.id === e.target.value);
+              const employee = eligibleEmployeeChoices.find((item) => item.id === f.employeeId);
+              const eligibility = employee ? hmoEligibilityDate(employee.dateHired) : null;
+              const effective = [today(), next?.coverageStart ?? "", eligibility ?? ""].filter(Boolean).sort().slice(-1)[0] ?? today();
+              setF({ ...f, planId: e.target.value, effective, expiration: next?.coverageEnd ?? "" });
+              setError("");
+            }}
+          >
+            <option value="">Select plan</option>
+            {plans.map((item) => (
+              <option key={item.id} value={item.id}>
+                {item.name}
+              </option>
+            ))}
+          </select>
+        </Field>
+        <Field label="Employee">
+          <select
+            className={input}
+            value={f.employeeId}
+            onChange={(e) => {
+              const employeeId = e.target.value;
+              const employee = eligibleEmployeeChoices.find((item) => item.id === employeeId);
+              const eligibility = employee ? hmoEligibilityDate(employee.dateHired) : null;
+              const earliest = [today(), plan?.coverageStart ?? "", eligibility ?? ""].filter(Boolean).sort().slice(-1)[0] ?? today();
+              setF({ ...f, employeeId, effective: earliest });
+              setError("");
+            }}
+          >
+            <option value="">Select employee</option>
+            {eligibleEmployeeChoices.map((e) => (
+                <option key={e.id} value={e.id}>
+                  {e.name} ({e.employeeNo})
+                </option>
+              ))}
+          </select>
+        </Field>
+        <div className="grid grid-cols-2 gap-3">
+          <Field label="Eligibility Date">
+            <TextInput value={eligibilityDate ?? "Unavailable — hire date required"} readOnly />
+          </Field>
+          <Field label="Effective Date">
+            <TextInput
+              type="date"
+              min={eligibilityDate ?? plan?.coverageStart}
+              max={plan?.coverageEnd}
+              value={f.effective}
+              onChange={(e) => { setF({ ...f, effective: e.target.value }); setError(""); }}
+            />
+          </Field>
+        </div>
+        {selectedEmployee && !eligibilityDate && <p role="alert" className="text-[12px] text-amber-800">This employee record has no valid hire date. Update the employee record before submitting enrollment.</p>}
+        {selectedEmployee && eligibilityDate && !eligibleForEffectiveDate && <p role="alert" className="text-[12px] text-amber-800">The employee becomes eligible on {formatHmoDate(eligibilityDate)} after completing the six-month waiting period.</p>}
+        {plan && !withinPlanDates && <p role="alert" className="text-[12px] text-amber-800">The effective date must fall within the active plan coverage period ({formatHmoDate(plan.coverageStart)} – {formatHmoDate(plan.coverageEnd)}).</p>}
+        <Field label="Expiration Date">
+          <TextInput
+            type="date"
+            min={f.effective}
+            max={plan?.coverageEnd}
+            value={f.expiration}
+            onChange={(e) => { setF({ ...f, expiration: e.target.value }); setError(""); }}
+          />
+        </Field>
+        {!validExpiration && <p role="alert" className="text-[12px] text-amber-800">Expiration must be on or after the effective date and within the plan coverage period.</p>}
+        <p className="text-[12px] text-gray-500">
+          The enrollment goes to an Admin for approval. HR then sends it to Maxicare, and it becomes Enrolled when HR enters the member ID from Maxicare's confirmation.
+        </p>
+        {error && <div role="alert" className="rounded-xl border border-red-200 bg-red-50 p-3 text-[12px] text-red-800">{error}</div>}
+      </div>
+      <div className="mt-6 flex justify-end gap-2">
+        <button className={ghost} onClick={onClose} disabled={saving}>
+          Cancel
+        </button>
+        <Button disabled={saving || !f.employeeId || !plan || !eligibleForEffectiveDate || !withinPlanDates || !validExpiration} onClick={() => void save()}>
+          {saving ? "Submitting…" : "Submit Enrollment"}
+        </Button>
+      </div>
+    </Modal>
+  );
+}
+function DependentModal({
+  enrollments,
+  employeeMap,
+  onClose,
+  onSaved,
+}: {
+  enrollments: HmoEnrollment[];
+  employeeMap: Map<string, Employee>;
+  onClose: () => void;
+  onSaved: () => void;
+}) {
+  const [f, setF] = useState({
+    enrollmentId: "",
+    name: "",
+    relationship: "Spouse",
+    dob: "",
+  });
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
+  const selectedEnrollment = enrollments.find((e) => e.id === f.enrollmentId);
+  const effectiveDate = selectedEnrollment?.effectiveDate ?? "";
+  const save = async () => {
+    const name = f.name.trim();
+    if (!f.enrollmentId || !name || !effectiveDate || saving) return;
+    if (f.dob && f.dob > today()) {
+      setError("Date of birth cannot be in the future.");
+      return;
+    }
+    setSaving(true);
+    setError("");
+    try {
+      await hmoService.createDependent({
+        enrollmentId: f.enrollmentId,
+        name,
+        relationship: f.relationship,
+        dateOfBirth: f.dob || null,
+        eligibilityStatus: "Pending",
+        effectiveDate,
+        status: "Pending",
+      });
+      recordAudit({
+        action: "Submitted dependent",
+        module: "HMO & Benefits",
+        description: `Submitted dependent ${name} for HMO coverage.`,
+      });
+      onSaved();
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "The dependent could not be submitted.");
+    } finally {
+      setSaving(false);
+    }
+  };
+  return (
+    <Modal title="Add Dependent" onClose={onClose}>
+      <div className="grid gap-4">
+        <Field label="Employee">
+          <select
+            className={input}
+            value={f.enrollmentId}
+            onChange={(e) => {
+              setF({ ...f, enrollmentId: e.target.value });
+              setError("");
+            }}
+          >
+            <option value="">Select employee</option>
+            {enrollments.map((e) => (
+              <option key={e.id} value={e.id}>
+                {employeeMap.get(e.employeeId)?.name ?? e.employeeId}
+              </option>
+            ))}
+          </select>
+        </Field>
+        <Field label="Dependent Name">
+          <TextInput
+            value={f.name}
+            onChange={(e) => {
+              setF({ ...f, name: e.target.value });
+              setError("");
+            }}
+          />
+        </Field>
+        <Field label="Relationship">
+          <select
+            className={input}
+            value={f.relationship}
+            onChange={(e) => setF({ ...f, relationship: e.target.value })}
+          >
+            <option>Spouse</option>
+            <option>Child</option>
+          </select>
+        </Field>
+        <Field label="Date of Birth">
+          <TextInput
+            type="date"
+            max={today()}
+            value={f.dob}
+            onChange={(e) => {
+              setF({ ...f, dob: e.target.value });
+              setError("");
+            }}
+          />
+        </Field>
+        <Field label="Coverage Effective Date">
+          <TextInput type="date" value={effectiveDate} readOnly />
+        </Field>
+        <p className="text-[12px] text-gray-500">
+          Coverage starts with the employee&apos;s active HMO enrollment. Only a
+          spouse or child can be submitted as an eligible dependent.
+        </p>
+        {error && <ErrorAlert>{error}</ErrorAlert>}
+      </div>
+      <div className="mt-6 flex justify-end gap-2">
+        <button className={ghost} onClick={onClose} disabled={saving}>
+          Cancel
+        </button>
+        <Button disabled={saving || !f.enrollmentId || !f.name.trim() || !effectiveDate} onClick={() => void save()}>
+          {saving ? "Submitting…" : "Submit Dependent"}
+        </Button>
+      </div>
+    </Modal>
+  );
+}
+function HmoRecordsSection({
+  enrollments,
+  plans,
+  dependents,
+  employeeMap,
+  onChanged,
+}: {
+  enrollments: HmoEnrollment[];
+  plans: HmoPlan[];
+  dependents: HmoDependent[];
+  employeeMap: Map<string, Employee>;
+  onChanged: () => void;
+}) {
+  const [selectedEnrollment, setSelectedEnrollment] = useState<HmoEnrollment | null>(null);
+  const rows = enrollments.map((enrollment) => {
+    const employee = employeeMap.get(enrollment.employeeId);
+    const plan = plans.find((item) => item.id === enrollment.planId);
+    const coveredDependents = dependents.filter((item) => item.enrollmentId === enrollment.id);
+    const activeDependents = coveredDependents.filter(
+      (item) =>
+        item.status === "Active" &&
+        item.approvalStatus === "Approved" &&
+        item.maxicareStatus === "Active",
+    );
+    const companyShare =
+      (Number(plan?.employeeMonthlyPremium ?? 0) * Number(plan?.employeeCompanyShare ?? 0)) / 100 +
+      activeDependents.reduce((sum, item) => sum + Number(item.companyShare ?? 0), 0);
+    const employeeShare =
+      (Number(plan?.employeeMonthlyPremium ?? 0) * Number(plan?.employeeMemberShare ?? 0)) / 100 +
+      activeDependents.reduce((sum, item) => sum + Number(item.employeeShare ?? 0), 0);
+    return {
+      enrollment,
+      employee,
+      plan,
+      dependents: coveredDependents,
+      companyShare: Math.round(companyShare * 100) / 100,
+      employeeShare: Math.round(employeeShare * 100) / 100,
+    };
+  });
+  const exportPdf = () => {
+    const document = new jsPDF({ orientation: "landscape", unit: "mm", format: "a4" });
+    document.setFontSize(16);
+    document.setTextColor(20, 43, 80);
+    document.text("HMO Summary Report", 14, 16);
+    document.setFontSize(9);
+    document.setTextColor(100, 119, 150);
+    document.text(`Generated ${new Date().toLocaleString("en-PH")}`, 14, 22);
+    autoTable(document, {
+      startY: 28,
+      head: [[
+        "Employee",
+        "Department",
+        "HMO Plan",
+        "Coverage Period",
+        "Dependents",
+        "Company Share",
+        "Employee Share",
+        "Enrollment Status",
+      ]],
+      body: rows.map((row) => [
+        row.employee?.name ?? row.enrollment.employeeId,
+        row.employee?.department ?? "Unavailable",
+        row.plan?.name ?? "Unavailable",
+        `${formatHmoDate(row.enrollment.effectiveDate)} – ${formatHmoDate(row.enrollment.expirationDate)}`,
+        row.dependents.length ? row.dependents.map((item) => item.name).join(", ") : "None",
+        money(row.companyShare),
+        money(row.employeeShare),
+        enrollmentDisplayStatus(row.enrollment),
+      ]),
+      theme: "grid",
+      styles: { fontSize: 7, cellPadding: 2, textColor: [20, 43, 80] },
+      headStyles: { fillColor: [23, 52, 91], textColor: [255, 255, 255], fontStyle: "bold" },
+      alternateRowStyles: { fillColor: [245, 248, 252] },
+      margin: { left: 14, right: 14 },
+    });
+    document.save(`hmo-summary-${new Date().toISOString().slice(0, 10)}.pdf`);
+  };
+  return (
+    <Card className="hmo-records-report mt-4">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <h2 className="m-0 text-[16px] font-semibold">HMO Records</h2>
+          <p className="mt-1 text-[12px] text-gray-500">
+            Accurate employee enrollment summary, coverage, dependents, and contribution shares.
+          </p>
+        </div>
+        <div className="flex flex-wrap gap-2 print:hidden">
+          <Button onClick={exportPdf}>Export PDF</Button>
+        </div>
+      </div>
+      {rows.length === 0 ? (
+        <div className="mt-4"><Empty>No HMO records found.</Empty></div>
+      ) : (
+        <div className="mt-4 overflow-x-auto">
+          <table className="w-full min-w-[1250px] text-left text-[13px]">
+            <thead>
+              <tr className="border-b border-gray-100 text-[11px] uppercase tracking-wide text-gray-500">
+                {[
+                  "Employee",
+                  "Department",
+                  "HMO Plan",
+                  "Coverage Period",
+                  "Dependents",
+                  "Company Share",
+                  "Employee Share",
+                  "Enrollment Status",
+                  "Action",
+                ].map((label) => <th key={label} className="px-3 py-3">{label}</th>)}
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map((row) => (
+                <tr key={row.enrollment.id} className="border-b border-gray-100">
+                  <td className="px-3 py-3 font-semibold">{row.employee?.name ?? row.enrollment.employeeId}</td>
+                  <td className="px-3 py-3">{row.employee?.department ?? "Unavailable"}</td>
+                  <td className="px-3 py-3">{row.plan?.name ?? "Unavailable"}</td>
+                  <td className="px-3 py-3 whitespace-nowrap">{formatHmoDate(row.enrollment.effectiveDate)} – {formatHmoDate(row.enrollment.expirationDate)}</td>
+                  <td className="px-3 py-3">{row.dependents.length ? row.dependents.map((item) => item.name).join(", ") : "None"}</td>
+                  <td className="px-3 py-3 whitespace-nowrap">{money(row.companyShare)}</td>
+                  <td className="px-3 py-3 whitespace-nowrap">{money(row.employeeShare)}</td>
+                  <td className="px-3 py-3"><StatusBadge status={enrollmentDisplayStatus(row.enrollment)}/></td>
+                  <td className="px-3 py-3"><button type="button" className="font-semibold text-blue-600 hover:text-blue-800 print:hidden" onClick={() => setSelectedEnrollment(row.enrollment)}>View</button></td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+      {selectedEnrollment && (
+        <EnrollmentViewModal
+          enrollment={selectedEnrollment}
+          employee={employeeMap.get(selectedEnrollment.employeeId)}
+          plan={plans.find((item) => item.id === selectedEnrollment.planId)}
+          onClose={() => setSelectedEnrollment(null)}
+          onChanged={() => { setSelectedEnrollment(null); onChanged(); }}
+        />
+      )}
+    </Card>
+  );
+}

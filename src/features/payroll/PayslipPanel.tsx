@@ -1,0 +1,135 @@
+import {useMemo,useState} from 'react';
+import type {ReactNode} from 'react';
+import {useSearchParams} from 'react-router-dom';
+import {Button,Card,Empty,Field,Modal,TextInput,ghost} from '../../components/common/ui';
+import type {Employee} from '../../types/domain';
+import {peso,read} from '../../utils/storage';
+import {RUNS_KEY,runLabel,releaseDepartments,runStatus} from './payrollRuns';
+import type {PayrollRun,RunRow} from './payrollRuns';
+import {can} from '../auth/permissions';
+import {buildPayslipBreakdownFromRun} from './payslipMath';
+import {payslipLines} from '../../../backend-render/payslipLines.js';
+import type {PayslipLine} from '../../../backend-render/payslipLines.js';
+import {StatusBadge} from '../../components/common/StatusBadge';
+import {formatDate} from '../../utils/date';
+import {documentLogo,loadBranding} from '../settings/systemSettings';
+
+const when=(iso?:string)=>iso?new Date(iso).toLocaleString('en-PH',{dateStyle:'medium',timeStyle:'short'}):'—';
+const Badge=({on,text}:{on:boolean;text?:string})=><StatusBadge status={on?'Released':'Not released'} label={text}/>;
+const progressBadge=(done:number,total:number)=><StatusBadge status={done===0?'Not released':done<total?'Partially released':'Released'} label={`${done} of ${total} departments`}/>;
+const th='px-4 py-3';
+const head='border-b bg-gray-50 text-[11px] uppercase tracking-wide text-gray-500';
+
+export function PayslipPanel({employees}:{employees:Employee[]}){
+ // Payslips exist once a run is Paid (every employee paid); the date shown is when it was paid.
+ const generatedAt=(r:PayrollRun)=>r.payslipsGeneratedAt??r.paidAt;
+ const[tick,setTick]=useState(0),[confirm,setConfirm]=useState<string[]|null>(null);
+ // ?run=<id> (the Payslips button on Payroll Runs) opens that run's departments, even before it is Paid.
+ const linked=useSearchParams()[0].get('run')??'';
+ const runs=useMemo(()=>read<PayrollRun[]>(RUNS_KEY,[]).filter(r=>(['Paid','Closed'].includes(runStatus(r))&&generatedAt(r))||r.id===linked).sort((a,b)=>(generatedAt(b)??'').localeCompare(generatedAt(a)??'')),[tick,linked]);
+ const[runId,setRunId]=useState(linked),[dept,setDept]=useState(''),[slip,setSlip]=useState<RunRow|null>(null);
+ const deptOf=(row:RunRow)=>employees.find(e=>e.employeeNo===row.input.empId)?.department||'Unassigned';
+ // Employee status as saved when the payroll was computed; runs computed before it was kept use the employee record.
+ const statusOf=(row:RunRow)=>{const employee=employees.find(e=>e.employeeNo===row.input.empId);return row.employmentStatus||employee?.employmentStatus||employee?.status||'—'};
+ const deptsOf=(run:PayrollRun)=>[...new Set(run.rows.map(deptOf))].sort();
+ const run=runs.find(r=>r.id===runId);
+ // Payslips are released only while the run is Paid; it closes when every department is released.
+ const releasable=Boolean(run&&can('payroll.release')&&runStatus(run)==='Paid');
+ // Releasing to ESS needs the user's passkey, verified by the server; the field is cleared whenever the modal closes.
+ const[releasePasskey,setReleasePasskey]=useState(''),[releaseError,setReleaseError]=useState(''),[releaseBusy,setReleaseBusy]=useState(false);
+ const closeConfirm=()=>{if(releaseBusy)return;setConfirm(null);setReleasePasskey('');setReleaseError('')};
+ const doRelease=async()=>{
+  if(!run||!confirm||!releasePasskey)return;
+  setReleaseBusy(true);setReleaseError('');
+  try{
+   const result=await releaseDepartments(run.id,confirm,confirm.length>1,releasePasskey);
+   if(result.verified){setConfirm(null);setReleasePasskey('');setTick(t=>t+1);return}
+   setReleasePasskey('');
+   setReleaseError(result.reason==='not_set'?'Passkey not set':result.reason==='locked'?'Passkey locked':'Incorrect passkey');
+  }catch(cause){setReleaseError(cause instanceof Error&&cause.message?cause.message:'Payslips could not be released')}finally{setReleaseBusy(false)}
+ };
+
+ // Level 3: employees of a department
+ if(run&&dept){
+  const rows=run.rows.filter(r=>deptOf(r)===dept);
+  return <section className="mt-6 space-y-4">
+   <div className="flex items-center justify-between"><button className={ghost} onClick={()=>setDept('')}>Back</button><Badge on={Boolean(run.released?.[dept])}/></div>
+   <Card className="border-blue-100"><div className="mb-4 flex items-start justify-between gap-3"><div><h2 className="m-0 text-[17px] font-semibold text-gray-900">{dept}</h2><p className="mb-0 mt-1 text-[12px] text-gray-500">{runLabel(run)} · {rows.length} employees</p></div><span className="rounded-full bg-blue-50 px-3 py-1.5 text-[11px] font-semibold text-blue-700">Paid payroll</span></div>
+    <div className="overflow-x-auto rounded-xl border border-gray-200"><table className="w-full text-left text-[13px]"><thead><tr className={head}>{['Employee','Gross Pay','Deductions','Net Pay','Action'].map(l=><th key={l} className={th}>{l}</th>)}</tr></thead><tbody>{rows.map(row=><tr key={row.input.empId} className="border-b border-gray-100 transition-colors hover:bg-blue-50/40"><td className="px-4 py-3"><div className="font-semibold text-gray-800">{row.input.name}</div><div className="text-[11px] text-gray-400">{row.input.empId}</div></td><td className="px-4 py-3 tabular-nums">{peso(row.result.gross)}</td><td className="px-4 py-3 tabular-nums text-rose-700">{peso(row.result.deductions)}</td><td className="px-4 py-3 tabular-nums font-semibold text-gray-900">{peso(row.result.net)}</td><td className="px-4 py-3"><button className={ghost} onClick={()=>setSlip(row)}>View Payslip</button></td></tr>)}</tbody></table></div>
+   </Card>
+   {slip&&<SlipModal run={run} row={slip} dept={dept} status={statusOf(slip)} onClose={()=>setSlip(null)}/>}
+  </section>;
+ }
+
+ // Level 2: departments of a run
+ if(run){
+  const depts=deptsOf(run);
+  return <section className="mt-6 space-y-4">
+  <div className="flex items-center justify-between"><button className={ghost} onClick={()=>setRunId('')}>Back</button>{releasable&&depts.some(d=>!run.released?.[d])&&<Button onClick={()=>setConfirm(depts.filter(d=>!run.released?.[d]))}>Release All to ESS</Button>}</div>
+   <Card><h2 className="m-0 text-[16px] font-semibold">Release payslips to ESS</h2><p className="mb-4 mt-1 text-[12px] text-gray-500">{runLabel(run)} · Release each department so its employees can view their payslips in ESS, The run closes once every department is released.</p>
+    <div className="overflow-x-auto rounded-xl border border-gray-200"><table className="w-full text-left text-[13px]"><thead><tr className={head}>{['Department','Employees','Status','Action'].map(l=><th key={l} className={th}>{l}</th>)}</tr></thead><tbody>{depts.map(d=><tr key={d} className="border-b border-gray-100"><td className="px-4 py-3 font-semibold">{d}</td><td className="px-4 py-3">{run.rows.filter(r=>deptOf(r)===d).length}</td><td className="px-4 py-3"><Badge on={Boolean(run.released?.[d])}/></td><td className="px-4 py-3"><div className="flex gap-2"><button className={ghost} onClick={()=>setDept(d)}>View</button>{releasable&&!run.released?.[d]&&<Button onClick={()=>setConfirm([d])}>Release to ESS</Button>}</div></td></tr>)}</tbody></table></div>
+   </Card>
+   {confirm&&<Modal title="Release payslips to ESS" onClose={closeConfirm}>
+ <p className="text-[13px]">Release payslips of <b>{confirm.join(', ')}</b> for {runLabel(run)} to ESS?</p>
+ <p className="mt-1 text-[12px] text-gray-500">Employees will be able to view their payslips. This cannot be undone.</p>
+ <div className="mt-4"><Field label="Passkey"><TextInput type="password" autoComplete="off" autoFocus value={releasePasskey} onChange={event=>setReleasePasskey(event.target.value)} onKeyDown={event=>{if(event.key==='Enter')void doRelease()}}/></Field></div>
+ {releaseError&&<p role="alert" className="mt-3 rounded-lg bg-red-50 p-3 text-[13px] text-red-700">{releaseError}</p>}
+ <div className="mt-6 flex justify-end gap-2"><button className={ghost} disabled={releaseBusy} onClick={closeConfirm}>Cancel</button><Button disabled={!releasePasskey||releaseBusy} onClick={()=>void doRelease()}>Confirm Release</Button></div>
+</Modal>}
+  </section>;
+ }
+
+ // Level 1: approved runs
+  return <section className="mt-6 space-y-4" aria-label="Payslip records">
+  <Card className="border-blue-100"><div className="mb-4 flex items-start justify-between gap-3"><div><div className="text-[10px] font-semibold uppercase tracking-[0.12em] text-blue-600">Payroll documents</div><h2 className="mb-0 mt-1 text-[18px] font-semibold text-gray-900">Payslips</h2></div><span className="rounded-xl border border-blue-100 bg-blue-50 px-3 py-2 text-[12px] font-semibold text-blue-700">{runs.length} {runs.length===1?"run":"runs"}</span></div>
+   <div className="overflow-x-auto rounded-xl border border-gray-200"><table className="w-full text-left text-[13px]"><thead><tr className={head}>{['Cutoff','Generated','Released to ESS','Run status','Action'].map(l=><th key={l} className={th}>{l}</th>)}</tr></thead><tbody>{!runs.length?<tr><td colSpan={5}><Empty>No payslips yet. They are generated once every employee in a run is Paid.</Empty></td></tr>:runs.map(r=>{return <tr key={r.id} className="border-b border-gray-100 transition-colors hover:bg-blue-50/40"><td className="whitespace-nowrap px-4 py-3 font-semibold text-gray-900">{runLabel(r)}</td><td className="whitespace-nowrap px-4 py-3 text-gray-500">{when(generatedAt(r))}</td><td className="px-4 py-3">{(()=>{const depts=deptsOf(r);return progressBadge(depts.filter(d=>r.released?.[d]).length,depts.length)})()}</td><td className="px-4 py-3"><StatusBadge status={runStatus(r)}/></td><td className="px-4 py-3"><div className="flex gap-2 whitespace-nowrap"><button className={ghost} onClick={()=>setRunId(r.id)}>View payslips</button></div></td></tr>})}</tbody></table></div>
+  </Card>
+ </section>;
+}
+
+const nf=(n:number)=>n.toLocaleString('en-PH',{minimumFractionDigits:2,maximumFractionDigits:2});
+
+/** One payslip: earnings with an amount, deductions in groups with subtotals, and net pay (the saved figures). */
+function SlipModal({run,row,dept,status,onClose}:{run:PayrollRun;row:RunRow;dept:string;status:string;onClose:()=>void}){
+ const c=row.result;
+ const breakdown=buildPayslipBreakdownFromRun(row),slip=payslipLines(row);
+ const period=runLabel(run);
+ const info=(l:string,v:string)=><div className="flex gap-2"><span className="text-gray-500">{l}:</span><span className="font-semibold text-gray-800">{v}</span></div>;
+ const line=(item:PayslipLine,index:number,indent=false)=><div key={index} className={`flex justify-between px-3 py-1.5 text-[12px] ${indent?'pl-6':''}`}><span>{item.label}</span><span className="tabular-nums">{nf(item.amount)}</span></div>;
+ const table=(title:string,body:ReactNode,totalLabel:string,total:number)=><div className="flex flex-col overflow-hidden rounded-lg border border-gray-200">
+  <div className="flex justify-between bg-gray-100 px-3 py-2 text-[11px] font-bold uppercase tracking-wide text-gray-600"><span>{title}</span><span>Amount (PHP)</span></div>
+  <div className="flex-1">{body}</div>
+  <div className="flex justify-between border-t border-gray-200 bg-gray-50 px-3 py-2 text-[12px] font-bold"><span>{totalLabel}</span><span className="tabular-nums">{nf(total)}</span></div>
+ </div>;
+ const earnings=<div className="divide-y divide-gray-100">{slip.earnings.map((item,index)=>line(item,index))}</div>;
+ // Each group under its own heading, ending with its subtotal.
+ const deductions=<div className="divide-y divide-gray-200">{slip.deductionGroups.map(group=><div key={group.title} className="py-1">
+  <div className="px-3 pb-0.5 pt-1.5 text-[10px] font-bold uppercase tracking-wide text-gray-500">{group.title}</div>
+  {group.lines.map((item,index)=>line(item,index,true))}
+  <div className="flex justify-between px-3 py-1.5 pl-6 text-[12px] font-semibold"><span>Subtotal</span><span className="tabular-nums">{nf(group.subtotal)}</span></div>
+ </div>)}</div>;
+ const brand=loadBranding();
+ return <Modal title="Payslip" wide onClose={onClose}>
+  <style>{`@media print{body *{visibility:hidden}.payslip-print,.payslip-print *{visibility:visible}.payslip-print{position:absolute;left:0;top:0;width:100%;border:0!important}.no-print{display:none!important}}`}</style>
+  <div className="payslip-print rounded-xl border border-gray-300 bg-white p-6 text-gray-800">
+   <div className="flex items-start justify-between gap-4 border-b border-gray-200 pb-4">
+    <div className="flex items-center gap-3">{brand.logoOnPayslips&&<img src={documentLogo()} alt="" className="h-10 w-10 object-contain"/>}<div><div className="text-[15px] font-bold uppercase tracking-wide">{brand.headerText}</div><div className="text-[11px] text-gray-500">Payslip</div></div></div>
+    <div className="text-right"><div className="text-[13px] font-semibold">{period}</div><span className="mt-1 inline-flex rounded-md bg-emerald-50 px-2.5 py-1 text-[11px] font-semibold text-emerald-700">Approved</span></div>
+   </div>
+   <div className="grid gap-1.5 border-b border-gray-200 py-4 text-[12px] sm:grid-cols-2">
+    <div className="space-y-1.5">{info('Name',row.input.name)}{info('Position',row.position||'—')}{info('Department',dept)}{info('Employee Status',status)}</div>
+    <div className="space-y-1.5">{info('Employee No.',row.input.empId)}{info('Payroll Period',period)}{info('Pay Date',formatDate(run.payDate??run.paidAt))}{info('Payment Method',run.payouts?.[row.input.empId]?.method??run.paymentMethod??'—')}</div>
+   </div>
+   {Math.abs(breakdown.earningsDifference)>0.01||Math.abs(breakdown.deductionsDifference)>0.01||Math.abs(breakdown.netDifference)>0.01?<div role="alert" className="rounded-lg border border-amber-300 bg-amber-50 px-4 py-3 text-[12px] font-medium text-amber-900">This saved payroll does not reconcile. Earnings difference: {nf(breakdown.earningsDifference)}; deductions difference: {nf(breakdown.deductionsDifference)}; net-pay difference: {nf(breakdown.netDifference)}. Have Payroll review the run before relying on this payslip.</div>:null}
+   <div className="grid gap-4 py-4">
+    {table('Earnings',earnings,'Gross Pay',c.gross)}
+    {table('Deductions',deductions,'Total Deductions',c.deductions)}
+   </div>
+  <div className="rounded-xl border border-blue-100 bg-gradient-to-r from-blue-50 to-indigo-50 px-5 py-4"><div className="flex items-center justify-between text-[17px] font-bold text-gray-900"><span>Net Pay</span><span className="tabular-nums text-blue-800">Php {nf(c.net)}</span></div><div className="mt-1 text-[11px] text-gray-500">Gross Pay − Total Deductions</div></div>
+   <div className="mt-10 flex justify-end text-[11px]"><div className="w-48 border-t border-gray-500 pt-1 text-center">Received By</div></div>
+   <div className="mt-6 text-[11px] text-gray-500">This is a system-generated payslip for {run.from} to {run.to}.</div>
+   {brand.footerText&&<div className="mt-2 border-t border-gray-200 pt-2 text-center text-[11px] text-gray-500">{brand.footerText}</div>}
+  </div>
+  <button className={`${ghost} no-print mt-4`} onClick={()=>window.print()}>Print / Save as PDF</button>
+ </Modal>;
+}

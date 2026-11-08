@@ -1,0 +1,102 @@
+import type {PayrollInput,PayrollRates,PayrollResult} from '../../types/domain';
+import {numberValue} from '../../utils/storage';
+import {calculateWithholdingTax,detectPayrollPeriod,loadWithholdingRules,ruleForDate} from './withholdingTax';
+import type {AnnualTaxHistory,PayrollPeriod,WithholdingTaxRuleSet} from './withholdingTax';
+import {pagibigEmployeeRate} from '../contributions/contributionCalculator';
+import {deMinimisRuleFor} from './deMinimis';
+const round=(v:number)=>Math.round((v+Number.EPSILON)*100)/100;
+const clamp=(v:number,lo:number,hi:number)=>Math.min(hi,Math.max(lo,v));
+
+/**
+ * benefitOnly: a 13th month or other-benefits payment made apart from a regular payroll period (a 13th month run).
+ * minimumWage: the daily minimum wage of the cutoff's wage order (minimumWageFor); without it, the rates' single rate.
+ */
+export interface PayrollTaxContext{periodStart?:string;periodEnd?:string;period?:PayrollPeriod;priorYear?:AnnualTaxHistory;finalPeriod?:boolean;rules?:WithholdingTaxRuleSet[];benefitOnly?:boolean;minimumWage?:number}
+export function computeTax(monthlyTaxable:number,table:Array<{over:number;base:number;rate:number}>):number{
+ const b=[...table].sort((a,c)=>c.over-a.over).find(x=>monthlyTaxable>=x.over);
+ return b?round(b.base+b.rate/100*(monthlyTaxable-b.over)):0;
+}
+
+/**
+ * The part of the month's SSS, PhilHealth and Pag-IBIG a cutoff deducts. Contributions are paid monthly: a semi-monthly
+ * payroll deducts all of them in the 2nd cutoff (ending after the 1st cutoff end day) and none in the 1st, unless it is
+ * the employee's final pay. Without a cutoff end date (a monthly estimate), or with contributionsEveryCutoff, it is the
+ * per-period split.
+ */
+export function contributionShare(R:PayrollRates,periodEnd?:string,finalPeriod=false){
+ if(R.payPeriodsPerMonth!==2)return 1;
+ if(!periodEnd||R.contributionsEveryCutoff)return 1/R.payPeriodsPerMonth;
+ if(finalPeriod)return 1;
+ return Number(periodEnd.slice(8,10))>R.firstCutoffEndDay?1:0;
+}
+
+/** Employer shares for one cutoff, from the Payroll Settings rates: same salary bases and share of the month as the
+ * employee shares; the SSS employer share includes the employer-only EC amount. Zero when no contributions apply. */
+export function employerShares(dailyRate:number,R:PayrollRates,applies=true,share=contributionShare(R)){
+ const monthly=dailyRate*R.daysPerMonth;
+ if(!applies||!(monthly>0))return {employerSss:0,employerPhil:0,employerPagibig:0};
+ const sssBase=clamp(Math.round(monthly/R.sssStep)*R.sssStep,R.sssMin,R.sssMax);
+ return {
+  employerSss:round((sssBase*R.sssEmployerRate/100+(sssBase<R.sssEcThreshold?R.sssEcLow:R.sssEcHigh))*share),
+  employerPhil:round(clamp(monthly,R.philMin,R.philMax)*R.philEmployerRate/100*share),
+  employerPagibig:round(Math.min(monthly,R.pagibigMax)*R.pagibigEmployerRate/100*share),
+ };
+}
+
+export function calculatePayroll(r:PayrollInput,R:PayrollRates,_brackets:Array<{over:number;base:number;rate:number}>=[],taxContext:PayrollTaxContext={}):PayrollResult{
+ const rate=numberValue(r.dailyRate),hourly=rate/R.hoursPerDay,monthly=rate*R.daysPerMonth;
+ const earnedBasic=round(rate*numberValue(r.daysWorked));
+ const absences=round(rate*numberValue(r.absentDays));
+ const basic=round(earnedBasic+absences);
+ const overtime=round(hourly*(R.otMultiplier*numberValue(r.otHours)+R.otRestMultiplier*numberValue(r.otRestHours)));
+ const leavePay=round(rate*(numberValue(r.vlDays)+numberValue(r.slDays)));
+ const nightDifferential=round(numberValue(r.nightDifferential));
+ // Allowances from Compensation: taxable allowances are regular pay; non-taxable allowances are exempt.
+ const taxableAllowances=round(numberValue(r.transportation)+numberValue(r.riceSubsidy)+numberValue(r.allowancesTaxable));
+ const exemptAllowances=round(numberValue(r.allowancesExempt));
+ const otherBenefitAllowances=round(numberValue(r.allowancesOtherBenefits));
+ const allowances=round(taxableAllowances+exemptAllowances+otherBenefitAllowances);
+ // Non-taxable bonuses count toward the combined 13th-month and other-benefits exemption.
+ const nonTaxableBonuses=round(numberValue(r.bonusesNonTaxable));
+ const thirteenth=round(numberValue(r.thirteenthMonthAndOtherBenefits)+nonTaxableBonuses);
+ const taxExemptInput=round(numberValue(r.taxExemptBenefits));
+ const taxExempt=round(taxExemptInput+exemptAllowances);
+ const earnings=round(overtime+nightDifferential+leavePay+numberValue(r.holidayPay)+numberValue(r.slConversion)+allowances+numberValue(r.otherEarnings)+thirteenth+taxExemptInput);
+ const gross=round(basic+earnings);
+ const late=round(hourly/60*numberValue(r.lateMin));
+ const undertime=round(hourly/60*numberValue(r.undertimeMin));
+ const has=rate>0&&round(gross-absences)>0;
+ const share=contributionShare(R,taxContext.periodEnd,taxContext.finalPeriod);
+ const sss=has?round(clamp(Math.round(monthly/R.sssStep)*R.sssStep,R.sssMin,R.sssMax)*R.sssRate/100*share):0;
+ const phil=has?round(clamp(monthly,R.philMin,R.philMax)*R.philRate/100*share):0;
+ const pagibig=has?round(Math.min(monthly,R.pagibigMax)*pagibigEmployeeRate(monthly,R)/100*share):0;
+ const periodStart=taxContext.periodStart??new Date().toISOString().slice(0,10),periodEnd=taxContext.periodEnd??periodStart;
+ const period=taxContext.period??(taxContext.periodStart||taxContext.periodEnd?detectPayrollPeriod(periodStart,periodEnd,R.payPeriodsPerMonth):(R.payPeriodsPerMonth===1?'monthly':'semi-monthly'));
+ // A minimum wage earner (daily rate at or below the minimum wage of the wage order in Payroll Settings) is exempt on the
+ // statutory minimum wage, holiday pay, overtime and night differential (NIRC Sec. 24(A)(2), RR 11-2018); paid leave is
+ // treated as part of the minimum wage. Taxable allowances, bonuses and benefits above ₱90,000 stay taxable.
+ const minimumWage=taxContext.minimumWage??numberValue(R.statutoryMinimumWage),mwe=minimumWage>0&&rate>0&&rate<=minimumWage;
+ const earnedBasicPay=Math.max(0,basic-absences-late-undertime);
+ // Paid leave is classified per the withholding rule version in Payroll Settings (supplementary unless set to regular).
+ const leaveIsRegular=ruleForDate(periodEnd,taxContext.rules??loadWithholdingRules()).paidLeaveAs==='regular';
+ const regular=mwe?taxableAllowances:earnedBasicPay+taxableAllowances+(leaveIsRegular?leavePay:0);
+ const supplementary=mwe?numberValue(r.otherEarnings):overtime+nightDifferential+(leaveIsRegular?0:leavePay)+numberValue(r.holidayPay)+numberValue(r.otherEarnings);
+ // Monetized unused leave is de minimis up to the yearly day limit at the daily rate (12 days under RR 29-2025);
+ // the rest, and de minimis allowances above their ceiling, are other benefits under the ₱90,000 exemption.
+ const monetizedLeave=round(numberValue(r.slConversion));
+ const monetizedLeaveExempt=round(Math.min(monetizedLeave,Math.max(0,deMinimisRuleFor(periodEnd).monetizedLeaveDays*rate-(taxContext.priorYear?.monetizedLeaveExempt??0))));
+ const otherBenefits=round(otherBenefitAllowances+monetizedLeave-monetizedLeaveExempt);
+ const computedTax=calculateWithholdingTax({regularCompensation:regular,supplementaryCompensation:supplementary,thirteenthMonthAndOtherBenefits:round(thirteenth+otherBenefits),taxExemptBenefits:round(taxExempt+monetizedLeaveExempt),mandatoryContributions:sss+phil+pagibig,period,periodStart,periodEnd,priorYear:taxContext.priorYear,finalPeriod:taxContext.finalPeriod,rules:taxContext.rules,benefitOnly:taxContext.benefitOnly});
+ const withDeMinimis={...computedTax,deMinimisExempt:round(exemptAllowances+monetizedLeaveExempt),monetizedLeaveExempt};
+ const computed=mwe?{...withDeMinimis,minimumWageEarner:true,mweExempt:{basic:round(earnedBasicPay),holidayPay:round(numberValue(r.holidayPay)),overtime,nightDifferential,leavePay}}:withDeMinimis;
+ // Tax is withheld only from the pay left after time not paid and contributions; it comes before loans and other
+ // deductions. Any more is not withheld: on the year-end or final pay the employer pays it (RR 11-2018 Sec.
+ // 2.79(B)(5)(b), Step 4), otherwise later payrolls of the year withhold it.
+ const payForTax=round(Math.max(0,gross-absences-late-undertime-sss-phil-pagibig));
+ const tax=computed.withholdingTax>payForTax?payForTax:computed.withholdingTax;
+ const taxBreakdown=tax===computed.withholdingTax?computed:{...computed,taxNotWithheld:round(computed.withholdingTax-tax),...(taxContext.finalPeriod?{employerPaysTax:true}:{})};
+ const loans=round(numberValue(r.sssLoan)+numberValue(r.pagibigLoan)+numberValue(r.companyLoan)+numberValue(r.cashAdvance)+numberValue(r.govSssLoan)+numberValue(r.govPagibigLoan));
+ const deductions=round(absences+late+undertime+sss+phil+pagibig+tax+loans+numberValue(r.otherDeductions));
+ const net=round(gross-deductions);
+ return{basic,earnedBasic,absences,overtime,leavePay,allowances,earnings,gross,late,undertime,lateUt:round(late+undertime),sss,phil,pagibig,tax,taxBreakdown,loans,deductions,net,shortfall:net<0?round(-net):0,...employerShares(rate,R,has,share)};
+}
