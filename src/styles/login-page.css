@@ -1,0 +1,85 @@
+/* Email verification action buttons matching Verify & Continue button style
+   (moved verbatim from the inline <style> of the legacy login.php) */
+.verify-actions {
+    display: grid !important;
+    grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+    gap: 0.75rem !important;
+    margin-top: 1rem !important;
+    width: 100% !important;
+}
+.btn-verify-action {
+    width: 100% !important;
+    min-height: 44px !important;
+    padding: 0.7rem 0.85rem !important;
+    font-size: 0.875rem !important;
+    font-weight: 600 !important;
+    font-family: inherit !important;
+    border: none !important;
+    border-radius: var(--radius-md, 8px) !important;
+    cursor: pointer !important;
+    display: inline-flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+    gap: 0.5rem !important;
+    text-decoration: none !important;
+    line-height: 1.25 !important;
+    box-sizing: border-box !important;
+    transition: var(--transition, all 0.2s ease) !important;
+    letter-spacing: 0.01em !important;
+}
+.btn-verify-action i {
+    font-size: 1.1rem !important;
+    flex-shrink: 0 !important;
+}
+/* "Use a different account" - Sleek Slate/Navy gradient */
+.btn-verify-cancel {
+    background: linear-gradient(135deg, #475569, #334155) !important;
+    color: #ffffff !important;
+    box-shadow: 0 2px 6px rgba(51, 65, 85, 0.25) !important;
+}
+.btn-verify-cancel:hover {
+    background: linear-gradient(135deg, #334155, #1e293b) !important;
+    box-shadow: 0 4px 12px rgba(30, 41, 59, 0.35) !important;
+    transform: translateY(-1px) !important;
+    color: #ffffff !important;
+}
+.btn-verify-cancel:active {
+    transform: translateY(0) !important;
+    box-shadow: 0 1px 3px rgba(30, 41, 59, 0.2) !important;
+}
+/* "Resend code" - Royal Blue gradient matching primary button */
+.btn-verify-resend {
+    background: linear-gradient(135deg, #2563eb, #1d4ed8) !important;
+    color: #ffffff !important;
+    box-shadow: 0 2px 6px rgba(37, 99, 235, 0.25) !important;
+}
+.btn-verify-resend:hover {
+    background: linear-gradient(135deg, #1d4ed8, #1e40af) !important;
+    box-shadow: 0 4px 12px rgba(37, 99, 235, 0.35) !important;
+    transform: translateY(-1px) !important;
+    color: #ffffff !important;
+}
+.btn-verify-resend:active {
+    transform: translateY(0) !important;
+    box-shadow: 0 1px 3px rgba(37, 99, 235, 0.2) !important;
+}
+@media (max-width: 480px) {
+    .verify-actions {
+        grid-template-columns: 1fr !important;
+        gap: 0.625rem !important;
+    }
+}
+
+/* Access denied page (inline <style> of the legacy unauthorized.php) */
+.denied-code {
+    font-size: 3.5rem;
+    font-weight: 800;
+    color: var(--danger);
+    line-height: 1;
+    margin-bottom: 0.5rem;
+}
+.denied-icon {
+    font-size: 2.5rem;
+    color: var(--danger);
+    margin-bottom: 0.75rem;
+}

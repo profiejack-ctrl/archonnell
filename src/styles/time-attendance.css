@@ -1,0 +1,192 @@
+/*
+ * Time & Attendance, Shift & Schedule, Leave Management and the employee's
+ * own attendance / leave pages. Only new "att-" classes; everything else uses
+ * the system stylesheet (cards, tables, badges, forms, buttons).
+ */
+
+/* Section tabs */
+.att-tabs {
+    display: flex;
+    gap: 0.25rem;
+    border-bottom: 1px solid var(--border);
+    margin-bottom: 1.25rem;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+}
+.att-tab {
+    background: none;
+    border: none;
+    border-bottom: 2px solid transparent;
+    padding: 0.7rem 1rem;
+    font: inherit;
+    font-size: 0.875rem;
+    font-weight: 600;
+    color: var(--text-secondary);
+    cursor: pointer;
+    white-space: nowrap;
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4rem;
+    transition: var(--transition);
+}
+.att-tab:hover { color: var(--text-primary); }
+.att-tab.active { color: var(--accent); border-bottom-color: var(--accent); }
+
+/* Two extra badge colours (same shape as .badge-*) */
+.att-badge-leave { background: #ede9fe; color: #5b21b6; }
+.att-badge-holiday { background: #fce7f3; color: #9d174d; }
+body.dark .att-badge-leave { background: #4c1d95; color: #ddd6fe; }
+body.dark .att-badge-holiday { background: #831843; color: #fbcfe8; }
+
+/* Filter bar: wraps into a grid on small screens */
+.att-filters {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.75rem;
+    align-items: flex-end;
+    margin-bottom: 1.25rem;
+}
+.att-filters .att-field { display: flex; flex-direction: column; gap: 0.3rem; min-width: 150px; }
+.att-filters .att-field label { font-size: 0.75rem; font-weight: 600; color: var(--text-secondary); }
+.att-filters .form-select, .att-filters .form-input { min-width: 150px; }
+.att-filters .att-actions { margin-left: auto; display: flex; gap: 0.5rem; flex-wrap: wrap; }
+
+.att-period-title { font-size: 1rem; font-weight: 700; color: var(--text-primary); margin: 0 0 0.75rem; }
+.att-note { font-size: 0.8rem; color: var(--text-secondary); margin: -0.5rem 0 1rem; }
+.att-muted { color: var(--text-muted); font-size: 0.75rem; }
+.att-nowrap { white-space: nowrap; }
+.att-num { text-align: right; font-variant-numeric: tabular-nums; }
+
+.att-pager { display: flex; justify-content: space-between; align-items: center; gap: 0.75rem; padding: 0.75rem 1rem; flex-wrap: wrap;
+    border-top: 1px solid var(--border); font-size: 0.8rem; color: var(--text-secondary); }
+.att-pager .att-pager-btns { display: flex; gap: 0.5rem; }
+
+/* Working-day chips in the schedule form */
+.att-daypicker { display: flex; flex-wrap: wrap; gap: 0.4rem; }
+.att-daypicker button {
+    border: 1px solid var(--border);
+    background: var(--bg-primary);
+    color: var(--text-secondary);
+    border-radius: 9999px;
+    padding: 0.35rem 0.8rem;
+    font: inherit;
+    font-size: 0.8rem;
+    font-weight: 600;
+    cursor: pointer;
+    transition: var(--transition);
+}
+.att-daypicker button.on { background: var(--accent); border-color: var(--accent); color: #fff; }
+
+/* Monthly calendar */
+.att-calendar-wrap { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+.att-calendar {
+    display: grid;
+    grid-template-columns: repeat(7, minmax(110px, 1fr));
+    gap: 1px;
+    background: var(--border);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md);
+    overflow: hidden;
+    min-width: 780px;
+}
+.att-cal-head {
+    background: var(--bg-secondary);
+    padding: 0.5rem;
+    text-align: center;
+    font-size: 0.75rem;
+    font-weight: 700;
+    letter-spacing: 0.04em;
+    color: var(--text-secondary);
+}
+.att-cal-cell {
+    background: var(--bg-primary);
+    min-height: 96px;
+    padding: 0.45rem 0.5rem;
+    font-size: 0.75rem;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+}
+.att-cal-cell--empty { background: var(--bg-secondary); }
+.att-cal-cell--rest { background: var(--bg-secondary); }
+.att-cal-cell--holiday { box-shadow: inset 3px 0 0 #db2777; }
+.att-cal-cell--leave { box-shadow: inset 3px 0 0 #7c3aed; }
+.att-cal-cell--work { box-shadow: inset 3px 0 0 var(--accent); }
+.att-cal-cell--today { outline: 2px solid var(--accent); outline-offset: -2px; }
+.att-cal-date { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 2px; }
+.att-cal-dnum { font-weight: 700; font-size: 0.9rem; color: var(--text-primary); }
+.att-cal-dmon { color: var(--text-muted); font-size: 0.7rem; }
+.att-cal-shift { font-weight: 600; color: var(--text-primary); }
+.att-cal-time { color: var(--text-secondary); }
+.att-cal-rest { color: var(--text-secondary); font-weight: 600; }
+.att-cal-muted { color: var(--text-muted); }
+.att-cal-tag { border-radius: 4px; padding: 1px 5px; font-weight: 600; font-size: 0.7rem; width: fit-content; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.att-cal-tag--holiday { background: #fce7f3; color: #9d174d; }
+.att-cal-tag--leave { background: #ede9fe; color: #5b21b6; }
+body.dark .att-cal-tag--holiday { background: #831843; color: #fbcfe8; }
+body.dark .att-cal-tag--leave { background: #4c1d95; color: #ddd6fe; }
+
+.att-legend { display: flex; flex-wrap: wrap; gap: 1rem; font-size: 0.75rem; color: var(--text-secondary); margin-top: 0.75rem; }
+.att-legend span::before { content: ''; display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 0.35rem; vertical-align: -1px; }
+.att-legend .lg-work::before { background: var(--accent); }
+.att-legend .lg-rest::before { background: var(--bg-tertiary); }
+.att-legend .lg-holiday::before { background: #db2777; }
+.att-legend .lg-leave::before { background: #7c3aed; }
+
+/* Employee time clock */
+.att-clock {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 1.5rem;
+    align-items: center;
+    justify-content: space-between;
+}
+.att-clock-time { font-size: 2rem; font-weight: 800; color: var(--text-primary); font-variant-numeric: tabular-nums; line-height: 1.1; }
+.att-clock-date { color: var(--text-secondary); font-size: 0.875rem; }
+.att-clock-info { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 0.75rem 1.5rem; flex: 1; min-width: 240px; }
+.att-clock-info .info-label { font-size: 0.75rem; color: var(--text-muted); }
+.att-clock-info .info-value { font-weight: 600; color: var(--text-primary); }
+.att-clock-btns { display: flex; gap: 0.75rem; flex-wrap: wrap; }
+.att-clock-btns .btn { min-width: 130px; justify-content: center; }
+
+/* Leave balance tiles */
+.att-balances { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 0.75rem; }
+.att-balance {
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md);
+    padding: 0.75rem 0.9rem;
+    background: var(--bg-primary);
+}
+.att-balance-name { font-size: 0.8rem; font-weight: 600; color: var(--text-secondary); }
+.att-balance-value { font-size: 1.4rem; font-weight: 800; color: var(--text-primary); }
+.att-balance-sub { font-size: 0.72rem; color: var(--text-muted); }
+.att-balance-bar { height: 6px; border-radius: 9999px; background: var(--bg-tertiary); margin-top: 0.4rem; overflow: hidden; }
+.att-balance-bar > span { display: block; height: 100%; background: var(--accent); }
+
+/* Leave history timeline */
+.att-history { list-style: none; margin: 0; padding: 0; }
+.att-history li { position: relative; padding: 0 0 0.9rem 1.25rem; font-size: 0.85rem; }
+.att-history li::before { content: ''; position: absolute; left: 0; top: 0.35rem; width: 8px; height: 8px; border-radius: 50%; background: var(--accent); }
+.att-history li::after { content: ''; position: absolute; left: 3.5px; top: 0.9rem; bottom: 0; width: 1px; background: var(--border); }
+.att-history li:last-child::after { display: none; }
+.att-history .h-when { color: var(--text-muted); font-size: 0.75rem; }
+
+@media (max-width: 768px) {
+    .att-filters { display: grid; grid-template-columns: 1fr 1fr; }
+    .att-filters .att-field, .att-filters .form-select, .att-filters .form-input { min-width: 0; width: 100%; }
+    .att-filters .att-actions { margin-left: 0; grid-column: 1 / -1; }
+    .att-clock-time { font-size: 1.6rem; }
+}
+@media (max-width: 480px) {
+    .att-filters { grid-template-columns: 1fr; }
+}
+
+/* Clock buttons: a disabled Time In / Time Out must look disabled. */
+.att-clock-btns .btn:disabled { opacity: 0.45; cursor: not-allowed; transform: none; box-shadow: none; }
+/* Stacked cards on the employee's own pages keep the usual spacing. */
+#page-attendance-schedule > .card, #page-leave-management > .card { margin-bottom: 1.5rem; }
+/* Module sections (e.g. Employee Attendance | Employee Schedules | My Attendance). */
+.att-sections { display: flex; flex-wrap: wrap; gap: 0.5rem; margin-bottom: 1.25rem; }
+@media (max-width: 480px) { .att-sections .btn { flex: 1 1 100%; justify-content: center; } }
+/* Link-styled buttons (document View / Download). */
+.att-doc-links a.btn { text-decoration: none; }

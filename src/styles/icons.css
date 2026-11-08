@@ -1,0 +1,28 @@
+/*
+ * Lucide icon adapter.
+ *
+ * The legacy UI used Remix Icon font glyphs (<i class="ri-...">). Each one is
+ * now a Lucide SVG inside the same <i> element, so every existing rule that
+ * targets "... i" (size, colour, margin, display) still applies. The SVG is
+ * 1em square, drawn in currentColor and sits on the text line exactly where
+ * the font glyph did, so line heights and alignment are unchanged.
+ *
+ * Loaded BEFORE styles.css so the system's own icon rules take precedence.
+ */
+i.lc {
+    font-style: normal;
+}
+
+/* Inside buttons (line-height: normal) the Remix glyph's box was the icon
+   font's normal line height, 1.09375em (e.g. 22px -> 24px, 32px -> 35px). */
+button i.lc {
+    line-height: 1.09375;
+}
+
+i.lc > svg {
+    display: inline-block;
+    width: 1em;
+    height: 1em;
+    vertical-align: -0.125em;
+    stroke: currentColor;
+}

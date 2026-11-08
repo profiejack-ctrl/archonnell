@@ -1,0 +1,260 @@
+/*
+ * Job posting as applicants see it (components/JobPostingView.tsx).
+ * Shared by the public job page and the HR preview, so the preview is exactly
+ * the public page. Colours and font are the public site's (Homepage/css).
+ */
+@import url('https://fonts.googleapis.com/css2?family=Montserrat:wght@400;500;600;700&display=swap');
+
+.jpv {
+    --jpv-navy: #0a3970;
+    --jpv-blue: #0877bb;
+    --jpv-text: #142b40;
+    --jpv-muted: #647484;
+    --jpv-light: #8ca3b7;
+    --jpv-line: #e4edf2;
+    --jpv-soft: #f7fbfe;
+    font-family: 'Montserrat', sans-serif;
+    color: var(--jpv-text);
+    background: #fff;
+    border: 1px solid var(--jpv-line);
+    border-radius: 10px;
+    box-shadow: 0 4px 20px rgba(0, 0, 0, 0.06);
+    overflow: hidden;
+    line-height: 1.6;
+    text-align: left;
+}
+
+.jpv-head {
+    background: linear-gradient(135deg, #f7fbfe, #eaf4fb);
+    border-bottom: 1px solid #a9def7;
+    padding: 32px 36px 26px;
+}
+
+.jpv-no {
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 2px;
+    color: var(--jpv-blue);
+    text-transform: uppercase;
+    margin-bottom: 6px;
+}
+
+.jpv-title {
+    font-family: 'Montserrat', sans-serif;
+    font-size: 30px;
+    font-weight: 500;
+    color: var(--jpv-navy);
+    line-height: 1.25;
+    margin: 0 0 4px;
+}
+
+.jpv-dept {
+    font-size: 15px;
+    font-weight: 600;
+    color: var(--jpv-blue);
+    margin-bottom: 18px;
+}
+
+.jpv-facts {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+    gap: 12px 20px;
+}
+
+.jpv-facts li {
+    display: flex;
+    align-items: flex-start;
+    gap: 10px;
+}
+
+.jpv-facts svg {
+    width: 18px;
+    height: 18px;
+    color: var(--jpv-blue);
+    flex-shrink: 0;
+    margin-top: 3px;
+}
+
+.jpv-fact-label {
+    display: block;
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 1px;
+    text-transform: uppercase;
+    color: var(--jpv-light);
+}
+
+.jpv-fact-value {
+    display: block;
+    font-size: 14px;
+    font-weight: 500;
+    color: var(--jpv-text);
+}
+
+.jpv-body {
+    padding: 8px 36px 32px;
+}
+
+.jpv-section {
+    padding: 22px 0;
+    border-bottom: 1px solid var(--jpv-line);
+}
+
+.jpv-section:last-child {
+    border-bottom: 0;
+}
+
+.jpv-section h2 {
+    font-family: 'Montserrat', sans-serif;
+    font-size: 17px;
+    font-weight: 600;
+    color: var(--jpv-navy);
+    margin: 0 0 10px;
+}
+
+.jpv-section h3 {
+    font-family: 'Montserrat', sans-serif;
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--jpv-navy);
+    margin: 14px 0 8px;
+}
+
+.jpv-text {
+    font-size: 14px;
+    color: var(--jpv-text);
+    white-space: pre-line;
+    margin: 0;
+}
+
+.jpv-list {
+    margin: 0;
+    padding-left: 20px;
+    font-size: 14px;
+}
+
+.jpv-list li {
+    margin-bottom: 5px;
+}
+
+.jpv-list li::marker {
+    color: var(--jpv-blue);
+}
+
+.jpv-note {
+    font-size: 13px;
+    color: var(--jpv-muted);
+    margin: 10px 0 0;
+}
+
+.jpv-tags {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+}
+
+.jpv-tag {
+    display: inline-block;
+    padding: 5px 12px;
+    border-radius: 20px;
+    font-size: 12px;
+    font-weight: 600;
+    background: #e3f2fd;
+    color: #1565c0;
+}
+
+.jpv-tag.preferred {
+    background: var(--jpv-soft);
+    color: var(--jpv-muted);
+    border: 1px solid var(--jpv-line);
+}
+
+.jpv-salary {
+    font-size: 16px;
+    font-weight: 700;
+    color: var(--jpv-navy);
+    margin: 0 0 6px;
+}
+
+.jpv-apply {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+    flex-wrap: wrap;
+    background: var(--jpv-soft);
+    border: 1px solid var(--jpv-line);
+    border-radius: 8px;
+    padding: 18px 22px;
+    margin-top: 22px;
+}
+
+.jpv-deadline {
+    font-size: 13px;
+    color: var(--jpv-muted);
+}
+
+.jpv-deadline strong {
+    display: block;
+    font-size: 15px;
+    color: var(--jpv-navy);
+}
+
+.jpv-apply-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    min-width: 200px;
+    padding: 14px 36px;
+    border: 0;
+    border-radius: 6px;
+    background: var(--jpv-blue);
+    color: #fff !important;
+    font-family: 'Montserrat', sans-serif;
+    font-size: 15px;
+    font-weight: 700;
+    letter-spacing: 0.5px;
+    text-decoration: none;
+    cursor: pointer;
+    transition: background 0.2s ease, transform 0.2s ease;
+}
+
+.jpv-apply-btn:hover {
+    background: #075d94;
+    transform: translateY(-2px);
+}
+
+.jpv-apply-btn:disabled,
+.jpv-apply-btn[aria-disabled='true'] {
+    opacity: 0.6;
+    cursor: not-allowed;
+    transform: none;
+}
+
+@media (max-width: 768px) {
+    .jpv-head {
+        padding: 24px 20px 20px;
+    }
+
+    .jpv-title {
+        font-size: 24px;
+    }
+
+    .jpv-body {
+        padding: 4px 20px 24px;
+    }
+
+    .jpv-apply {
+        flex-direction: column;
+        align-items: stretch;
+        text-align: center;
+    }
+
+    .jpv-apply-btn {
+        width: 100%;
+    }
+}

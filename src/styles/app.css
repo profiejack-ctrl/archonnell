@@ -1,0 +1,81 @@
+/*
+ * Additions the React build needs on top of the shared system stylesheets.
+ * Nothing here changes the look of an existing element.
+ */
+
+/* An <a> used as a Lucide-only table action (document View / Download) keeps
+   the button look the legacy markup gave it. */
+a.table-action-btn { display: inline-flex; align-items: center; justify-content: center; text-decoration: none; }
+
+/* Sidebar icons render as bare Lucide <svg class="nav-ico"> exactly as
+   lucide.createIcons() produced them; the collapse / arrow glyphs too. */
+.sidebar .nav-dropdown-arrow { flex-shrink: 0; }
+
+/* Candidate Ranking has ten columns: keep the Actions column (View Details)
+   pinned to the right edge so it stays reachable while the table scrolls
+   sideways on narrower screens. Same colours as the row / header it sits in. */
+#candidateRankingTable th:last-child,
+#candidateRankingTable td:last-child {
+    position: sticky;
+    right: 0;
+    z-index: 1;
+    background: var(--bg-primary);
+    box-shadow: -1px 0 0 var(--border);
+}
+#candidateRankingTable thead th:last-child { background: var(--bg-secondary); }
+#candidateRankingTable tbody tr:hover td:last-child { background: var(--bg-secondary); }
+#candidateRankingTable .badge { white-space: nowrap; }
+
+/* Hire / Proceed (btn-success) and Reject (btn-danger) buttons: the markup has
+   always asked for these, but no stylesheet defined them, so they rendered as
+   plain grey buttons. Same pattern as .btn-primary in styles.css. */
+.btn-success { background: var(--success); color: #fff; }
+.btn-success:hover { opacity: 0.9; transform: translateY(-1px); box-shadow: 0 4px 12px rgba(16, 185, 129, 0.25); }
+.btn-danger { background: var(--danger); color: #fff; }
+.btn-danger:hover { opacity: 0.9; transform: translateY(-1px); box-shadow: 0 4px 12px rgba(239, 68, 68, 0.25); }
+
+/* Final Interview: Schedule / Hire / Reject stay on one line. */
+#finalInterviewTable td:last-child { white-space: nowrap; }
+
+/* Empty-table messages: on phones the table scrolls sideways inside its card,
+   so a message centred across the whole table was cut off. Keep it inside the
+   visible part of the card instead (desktop is unchanged). */
+@media (max-width: 768px) {
+    .data-table td.empty-row-cell { padding-left: 0 !important; padding-right: 0 !important; }
+    .data-table td.empty-row-cell > .empty-row-text {
+        position: sticky;
+        left: 0;
+        width: calc(100vw - 3rem);
+        max-width: calc(100vw - 3rem);
+        padding: 0 1rem;
+        box-sizing: border-box;
+        white-space: normal;
+    }
+}
+
+/* ---------------------------------------------------------------
+ * Table filtering + sorting (components/TableControls.tsx)
+ * ------------------------------------------------------------- */
+.data-table th.th-sort { padding: 0; }
+.data-table th.th-sort .th-sort-btn {
+    display: inline-flex; align-items: center; gap: 0.35rem; width: 100%;
+    padding: 0.875rem 1.5rem; background: none; border: 0; cursor: pointer;
+    font: inherit; text-transform: inherit; letter-spacing: inherit; color: inherit; text-align: left;
+}
+.data-table th.th-sort .th-sort-btn:hover { color: var(--text-primary); }
+.data-table th.th-sort .th-sort-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.data-table th.th-sort .th-sort-ind { opacity: 0.4; font-size: 0.85rem; flex-shrink: 0; }
+.data-table th.th-sorted .th-sort-btn { color: var(--accent); }
+.data-table th.th-sorted .th-sort-ind { opacity: 1; }
+.filter-date-range { display: inline-flex; align-items: center; gap: 0.4rem; flex-wrap: wrap; }
+.filter-date-range .form-input { width: auto; padding: 0.55rem 0.6rem; }
+.filter-date-label { font-size: 0.8rem; color: var(--text-secondary); white-space: nowrap; }
+.filter-date-sep { font-size: 0.8rem; color: var(--text-secondary); }
+.filter-count { font-size: 0.8rem; color: var(--text-secondary); white-space: nowrap; }
+@media (max-width: 768px) {
+    .filter-date-range { width: 100%; }
+    .filter-date-range .form-input { flex: 1 1 8rem; min-width: 0; }
+    .filter-clear { align-self: flex-start; }
+}
+.sort-select { display: inline-flex; align-items: center; gap: 0.4rem; }
+@media (max-width: 768px) { .sort-select { width: 100%; } .sort-select .form-select { flex: 1; } }

@@ -1,0 +1,18 @@
+# Copied into app/ by every `npm run build` (Vite's public/ folder).
+#
+# Every build gives each JavaScript/CSS chunk a new hashed name and removes
+# the old ones. The HTML entry pages must therefore always be re-checked with
+# the server, or a browser could keep an old page that asks for chunks which
+# no longer exist ("Failed to fetch dynamically imported module").
+<IfModule mod_headers.c>
+    <FilesMatch "\.html$">
+        Header set Cache-Control "no-cache, must-revalidate"
+    </FilesMatch>
+</IfModule>
+
+# Hashed chunks never change once built: safe to cache for a long time.
+<IfModule mod_headers.c>
+    <If "%{REQUEST_URI} =~ m#/assets/[^/]+-[A-Za-z0-9_-]{8}\.(js|css)$#">
+        Header set Cache-Control "public, max-age=31536000, immutable"
+    </If>
+</IfModule>
