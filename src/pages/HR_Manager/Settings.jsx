@@ -1,0 +1,472 @@
+import { useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
+import {
+  Settings as SettingsIcon, Building, Palette, Shield,
+  Save, Globe, Mail, Smartphone, TimerOff, SlidersHorizontal,
+} from 'lucide-react';
+import Card, { CardHeader, CardTitle, CardDescription } from '../../components/ui/Card';
+import Button from '../../components/ui/Button';
+import Input, { Select } from '../../components/ui/Input';
+import { InfoNote, AccountSection, AppearanceSection } from '../../components/settings/SharedSections';
+import LeaveTypes from './LeaveTypes';
+import { settingsService, employeeService, departmentService } from '../../services/api';
+import { useToast } from '../../context/ToastContext';
+import { useLanguage, LANGUAGE_OPTIONS } from '../../context/LanguageContext';
+import { applySystemSettings } from '../../utils/appSettings';
+import useApiData from '../../hooks/useApiData';
+
+// Two clearly separated scopes: everything under COMPANY CONFIGURATION only
+// exists once for the whole organization and is managed exclusively by the
+// HR Admin; MY ACCOUNT holds this user's own password and look-and-feel.
+const NAV_GROUPS = [
+  {
+    label: 'Company Configuration',
+    items: [
+      { id: 'company', key: 'settings.company', icon: Building },
+      { id: 'timeManager', key: 'settings.timeManager', icon: TimerOff },
+      // The leave rules engine. It sits here with the other company-wide policy (grace period,
+      // lunch) rather than on the Leave Management page, because the admin never picks a rule
+      // while approving - the employee already filed against one. Leave Management stays the queue.
+      { id: 'leaveRules', key: 'settings.leaveRules', icon: SlidersHorizontal },
+      { id: 'regional', key: 'settings.regional', icon: Globe },
+    ],
+  },
+  {
+    label: 'My Account',
+    items: [
+      { id: 'account', key: 'settings.account', icon: Shield },
+      { id: 'appearance', key: 'settings.appearance', icon: Palette },
+    ],
+  },
+];
+
+function CompanySection({ settingsData, onSaved }) {
+  const { toast } = useToast();
+  const company = settingsData.company || {};
+  const [form, setForm] = useState({
+    name: company.name || '',
+    street: company.street || '',
+    city: company.city || '',
+    province: company.province || '',
+    zipCode: company.zipCode || '',
+    country: company.country || '',
+    phone: company.phone || '',
+    email: company.email || '',
+    website: company.website || '',
+  });
+  const { data: employeesData } = useApiData(() => employeeService.getAll(), []);
+  const { data: departmentsData } = useApiData(() => departmentService.getAll(), []);
+
+  const handleChange = (field, value) => {
+    setForm((prev) => ({ ...prev, [field]: value }));
+  };
+
+  const handleSave = async () => {
+    try {
+      await settingsService.update({ company: form });
+      toast.success('Company information updated', 'Company details have been saved successfully.');
+      onSaved?.();
+    } catch {
+      toast.error('Error', 'Failed to save company information.');
+    }
+  };
+
+  return (
+    <div className="space-y-6">
+      <Card>
+        <CardHeader>
+          <div>
+            <CardTitle>Company Details</CardTitle>
+            <CardDescription>Manage your company information and contact details</CardDescription>
+          </div>
+        </CardHeader>
+
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
+          <Input label="Company Name" value={form.name} onChange={(e) => handleChange('name', e.target.value)} icon={Building} />
+          <Input label="Phone" value={form.phone} onChange={(e) => handleChange('phone', e.target.value)} icon={Smartphone} />
+          <Input label="Email" type="email" value={form.email} onChange={(e) => handleChange('email', e.target.value)} icon={Mail} />
+          <Input label="Website" value={form.website} onChange={(e) => handleChange('website', e.target.value)} icon={Globe} />
+        </div>
+
+        <div className="mt-5">
+          <Input label="Street Address" value={form.street} onChange={(e) => handleChange('street', e.target.value)} />
+        </div>
+
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-5 mt-5">
+          <Input label="City" value={form.city} onChange={(e) => handleChange('city', e.target.value)} />
+          <Input label="Province" value={form.province} onChange={(e) => handleChange('province', e.target.value)} />
+          <Input label="Zip Code" value={form.zipCode} onChange={(e) => handleChange('zipCode', e.target.value)} />
+        </div>
+
+        <InfoNote>Company details are shared across the whole system - this is the only company on record.</InfoNote>
+
+        <div className="flex justify-end mt-6">
+          <Button icon={Save} onClick={handleSave}>Save Changes</Button>
+        </div>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <div>
+            <CardTitle>Company Overview</CardTitle>
+            <CardDescription>Live counts from your workforce data</CardDescription>
+          </div>
+        </CardHeader>
+
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
+          <div className="flex flex-col gap-1.5">
+            <label className="text-sm font-medium text-gray-700">Employee Count</label>
+            <div className="px-3.5 py-2.5 text-sm rounded-xl border border-gray-100 bg-gray-50 text-gray-700">
+              {employeesData?.length ?? 0} employees
+            </div>
+          </div>
+          <div className="flex flex-col gap-1.5">
+            <label className="text-sm font-medium text-gray-700">Departments</label>
+            <div className="px-3.5 py-2.5 text-sm rounded-xl border border-gray-100 bg-gray-50 text-gray-700">
+              {departmentsData?.length ?? 0} departments
+            </div>
+          </div>
+        </div>
+      </Card>
+    </div>
+  );
+}
+
+// Everything about how the clock treats a working day: how late is still "on time,"
+// and the unpaid lunch. The early clock-out policy is intentionally NOT editable
+// here - it stays enforced by EarlyLeavePolicy on its own fixed defaults
+// (30-day window, 2 free early outs, 2 sick outs, 48h certificate).
+function TimeManagerSection({ settingsData, onSaved }) {
+  return (
+    <div className="space-y-6">
+      <GracePeriodCard settingsData={settingsData} onSaved={onSaved} />
+
+      <LunchBreakCard settingsData={settingsData} onSaved={onSaved} />
+    </div>
+  );
+}
+
+// How many minutes after a shift's official start a clock-in still counts as On Time
+// before the kiosk marks it Late. The same number of minutes also decides how much
+// unapproved time past the shift's end is tolerated before HR is alerted.
+function GracePeriodCard({ settingsData, onSaved }) {
+  const { toast } = useToast();
+  const system = settingsData.system || {};
+  const [minutes, setMinutes] = useState(system.late_grace_minutes ?? 15);
+  const [noShowMinutes, setNoShowMinutes] = useState(system.absent_grace_minutes ?? 60);
+
+  const handleSave = async () => {
+    const value = Number(minutes);
+    const noShowValue = Number(noShowMinutes);
+    if (!(value >= 0 && value <= 120)) {
+      toast.error('Check the number', 'The grace period can be 0-120 minutes.');
+      return;
+    }
+    if (!(noShowValue >= 0 && noShowValue <= 240)) {
+      toast.error('Check the number', 'The no-show alert threshold can be 0-240 minutes.');
+      return;
+    }
+    try {
+      // 'system' is replaced wholesale by the API, so keep every value already on the row.
+      await settingsService.update({ system: { ...system, late_grace_minutes: value, absent_grace_minutes: noShowValue } });
+      toast.success('Grace periods updated', 'Applies to clock-ins, clock-outs and no-show alerts from now on.');
+      onSaved?.();
+    } catch {
+      toast.error('Error', 'Failed to save the grace periods.');
+    }
+  };
+
+  return (
+    <Card>
+      <CardHeader>
+        <div>
+          <CardTitle>Attendance Grace Periods</CardTitle>
+          <CardDescription>Two different timers: how late still counts as On Time, and when a no-show gets flagged</CardDescription>
+        </div>
+      </CardHeader>
+
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
+        <Input
+          label="Late grace period (minutes)"
+          type="number"
+          min={0}
+          max={120}
+          value={minutes}
+          onChange={(e) => setMinutes(e.target.value)}
+          icon={TimerOff}
+        />
+        <Input
+          label="No-show alert threshold (minutes)"
+          type="number"
+          min={0}
+          max={240}
+          value={noShowMinutes}
+          onChange={(e) => setNoShowMinutes(e.target.value)}
+          icon={TimerOff}
+        />
+      </div>
+
+      <InfoNote>
+        <strong>Late grace period:</strong> a clock-in within this many minutes of the shift start is Present; later
+        is Late. The same window also covers the other end of the day: staying more than this many minutes past the
+        shift's end with no approved overtime alerts HR as unauthorized overtime, and that extra time is not paid.
+        <br /><br />
+        <strong>No-show alert threshold:</strong> if someone scheduled today still hasn't clocked in this many
+        minutes after their shift started, HR is alerted with a "Possible No-Show." This is a separate, independent
+        timer from the late grace period above.
+      </InfoNote>
+
+      <div className="flex justify-end mt-6">
+        <Button icon={Save} onClick={handleSave}>Save Changes</Button>
+      </div>
+    </Card>
+  );
+}
+
+// The unpaid lunch: how long, and how many hours must be worked before it is deducted.
+function LunchBreakCard({ settingsData, onSaved }) {
+  const { toast } = useToast();
+  const system = settingsData.system || {};
+  const [form, setForm] = useState({
+    lunch_break_minutes: system.lunch_break_minutes ?? 60,
+    lunch_minimum_hours: system.lunch_minimum_hours ?? 5,
+  });
+
+  const handleSave = async () => {
+    const minutes = Number(form.lunch_break_minutes);
+    const hours = Number(form.lunch_minimum_hours);
+    if (!(minutes >= 0 && minutes <= 180) || !(hours >= 0 && hours <= 12)) {
+      toast.error('Check the numbers', 'Lunch can be 0-180 minutes, and the minimum hours 0-12.');
+      return;
+    }
+    try {
+      // 'system' is replaced wholesale by the API, so keep every value already on the row.
+      await settingsService.update({ system: { ...system, lunch_break_minutes: minutes, lunch_minimum_hours: hours } });
+      toast.success('Lunch break updated', 'It applies to days worked from now on. Past days are not changed.');
+      onSaved?.();
+    } catch {
+      toast.error('Error', 'Failed to save the lunch break.');
+    }
+  };
+
+  return (
+    <Card>
+      <CardHeader>
+        <div>
+          <CardTitle>Unpaid Lunch Break</CardTitle>
+          <CardDescription>Taken off each working day automatically - nobody has to clock out for lunch</CardDescription>
+        </div>
+      </CardHeader>
+
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
+        <Input
+          label="Lunch length (minutes)"
+          type="number"
+          min={0}
+          max={180}
+          value={form.lunch_break_minutes}
+          onChange={(e) => setForm((f) => ({ ...f, lunch_break_minutes: e.target.value }))}
+          icon={TimerOff}
+        />
+        <Input
+          label="Only if the person worked at least (hours)"
+          type="number"
+          min={0}
+          max={12}
+          step="0.5"
+          value={form.lunch_minimum_hours}
+          onChange={(e) => setForm((f) => ({ ...f, lunch_minimum_hours: e.target.value }))}
+        />
+      </div>
+
+      <InfoNote>
+        Once someone has worked the minimum hours, the lunch length is taken off their day - whenever lunch was really
+        taken. A shorter day (a sick early leave, a half day) loses nothing. Set the length to 0 to turn the deduction off.
+        Changes apply to days worked from now on; days already counted keep the lunch they were counted with.
+      </InfoNote>
+
+      <div className="flex justify-end mt-6">
+        <Button icon={Save} onClick={handleSave}>Save Changes</Button>
+      </div>
+    </Card>
+  );
+}
+
+function RegionalSection({ settingsData, onSaved }) {
+  const { toast } = useToast();
+  const { language, setLanguage } = useLanguage();
+  const system = settingsData.system || {};
+  const [prefs, setPrefs] = useState({
+    dateFormat: system.dateFormat || 'MM/DD/YYYY',
+    timeFormat: system.timeFormat || '12h',
+  });
+
+  const handleChange = (field, value) => {
+    setPrefs((prev) => ({ ...prev, [field]: value }));
+  };
+
+  const handleSave = async () => {
+    try {
+      await settingsService.update({ system: prefs });
+      applySystemSettings(prefs);
+      toast.success('Regional settings updated', 'These formats now apply across the app for every user.');
+      onSaved?.();
+    } catch {
+      toast.error('Error', 'Failed to save regional settings.');
+    }
+  };
+
+  return (
+    <div className="space-y-6">
+      <Card>
+        <CardHeader>
+          <div>
+            <CardTitle>Regional Settings</CardTitle>
+            <CardDescription>Configure the language, date, and time formats used across the app</CardDescription>
+          </div>
+        </CardHeader>
+
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
+          <Select label="Language" value={language} onChange={(e) => setLanguage(e.target.value)}>
+            {LANGUAGE_OPTIONS.map((opt) => (
+              <option key={opt.code} value={opt.code}>{opt.label}</option>
+            ))}
+          </Select>
+
+          <Select label="Date Format" value={prefs.dateFormat} onChange={(e) => handleChange('dateFormat', e.target.value)}>
+            <option value="MM/DD/YYYY">MM/DD/YYYY</option>
+            <option value="DD/MM/YYYY">DD/MM/YYYY</option>
+            <option value="YYYY-MM-DD">YYYY-MM-DD</option>
+            <option value="DD MMM YYYY">DD MMM YYYY</option>
+          </Select>
+
+          <Select label="Time Format" value={prefs.timeFormat} onChange={(e) => handleChange('timeFormat', e.target.value)}>
+            <option value="12h">12-hour (AM/PM)</option>
+            <option value="24h">24-hour</option>
+          </Select>
+        </div>
+
+        <InfoNote>
+          Date and time format are company-wide - changing them here changes how every user sees dates
+          and times throughout the app. Language is just for this browser.
+        </InfoNote>
+
+        <div className="flex justify-end mt-6">
+          <Button icon={Save} onClick={handleSave}>Save Changes</Button>
+        </div>
+      </Card>
+    </div>
+  );
+}
+
+export default function Settings() {
+  // The active section lives in the URL (?section=) instead of component state, so a section can
+  // be linked to directly - /leave-types redirects to /settings?section=leaveRules, and reloading
+  // the page keeps you where you were.
+  const [searchParams, setSearchParams] = useSearchParams();
+  const activeTab = searchParams.get('section') || 'company';
+  const [reloadKey, setReloadKey] = useState(0);
+  const { t } = useLanguage();
+
+  const { data: settingsData, loading, refresh } = useApiData(() => settingsService.get(), []);
+
+  const setActiveTab = (id) => {
+    const next = new URLSearchParams(searchParams);
+    if (id === 'company') next.delete('section');
+    else next.set('section', id);
+    // replace: switching sections is not a new place you were, so the back button still
+    // leaves Settings instead of stepping backwards through every tab you opened.
+    setSearchParams(next, { replace: true });
+  };
+
+  const handleSaved = () => {
+    refresh();
+    setReloadKey((k) => k + 1);
+  };
+
+  const renderSection = () => {
+    const props = { settingsData: settingsData || {}, onSaved: handleSaved };
+    switch (activeTab) {
+      case 'regional':
+        return <RegionalSection {...props} />;
+      case 'timeManager':
+        return <TimeManagerSection {...props} />;
+      case 'leaveRules':
+        // Fetches and manages its own data (leave_types, not the settings row).
+        return <LeaveTypes />;
+      case 'account':
+        return <AccountSection />;
+      case 'appearance':
+        return <AppearanceSection />;
+      case 'company':
+      default:
+        return <CompanySection {...props} />;
+    }
+  };
+
+  return (
+    <div className="space-y-6 animate-fadeIn">
+      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+        <div className="flex items-center gap-3">
+          <div className="w-10 h-10 rounded-xl bg-blue-50 flex items-center justify-center">
+            <SettingsIcon className="w-5 h-5 text-blue-600" />
+          </div>
+          <div>
+            <h1 className="text-2xl font-bold text-gray-900">{t('settings.title')}</h1>
+            <p className="text-[14px] text-gray-500 mt-1">Company configuration for the organization - your personal account below</p>
+          </div>
+        </div>
+      </div>
+
+      <div className="flex flex-col lg:flex-row gap-6">
+        <div className="w-full lg:w-64 shrink-0">
+          <Card padding={false}>
+            <nav className="p-2">
+              {NAV_GROUPS.map((group) => (
+                <div key={group.label} className={group.label === NAV_GROUPS[0].label ? '' : 'mt-3 pt-3 border-t border-gray-100'}>
+                  <p className="px-3 pt-2 pb-1.5 text-[10px] font-semibold uppercase tracking-wider text-gray-400">
+                    {group.label}
+                  </p>
+                  {group.items.map((item) => (
+                    <button
+                      key={item.id}
+                      onClick={() => setActiveTab(item.id)}
+                      className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium transition-all duration-200 ${
+                        activeTab === item.id
+                          ? 'bg-blue-50 text-blue-700'
+                          : 'text-gray-600 hover:bg-gray-50 hover:text-gray-900'
+                      }`}
+                    >
+                      <item.icon className={`w-4.5 h-4.5 ${activeTab === item.id ? 'text-blue-600' : 'text-gray-400'}`} />
+                      {t(item.key)}
+                    </button>
+                  ))}
+                </div>
+              ))}
+            </nav>
+          </Card>
+        </div>
+
+        <div className="flex-1 min-w-0">
+          {loading && !settingsData ? (
+            <div className="space-y-6">
+              {[1, 2].map((i) => (
+                <Card key={i}>
+                  <div className="space-y-4">
+                    <div className="skeleton h-5 w-40 rounded-lg" />
+                    <div className="skeleton h-4 w-64 rounded-lg" />
+                    <div className="skeleton h-20 w-full rounded-xl" />
+                  </div>
+                </Card>
+              ))}
+            </div>
+          ) : (
+            <div key={`${reloadKey}-${activeTab}`}>
+              {renderSection()}
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}

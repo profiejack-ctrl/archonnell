@@ -1,0 +1,171 @@
+import { useState } from 'react';
+import { Lock, Key, Info, Check, Circle, Mail } from 'lucide-react';
+import Card, { CardHeader, CardTitle, CardDescription } from '../ui/Card';
+import PasswordInput from '../ui/PasswordInput';
+import Button from '../ui/Button';
+import { authService } from '../../services/api';
+import { useToast } from '../../context/ToastContext';
+import { useAuth } from '../../context/AuthContext';
+import { useTheme } from '../../context/ThemeContext';
+
+// Settings content that is genuinely identical for Administrators and
+// Employees (password + display preferences) lives here once, instead of
+// being copy-pasted into both pages/HR_Manager/Settings.jsx and
+// pages/Employee/Settings.jsx.
+
+export function InfoNote({ children }) {
+  return (
+    <div className="mt-4 flex items-start gap-2 rounded-xl bg-blue-50/60 border border-blue-100 px-4 py-3">
+      <Info className="w-4 h-4 text-blue-500 mt-0.5 shrink-0" />
+      <p className="text-xs text-blue-700">{children}</p>
+    </div>
+  );
+}
+
+export function AccountSection() {
+  const { toast } = useToast();
+  const { user } = useAuth();
+  const [passwords, setPasswords] = useState({ current: '', newPass: '', confirm: '' });
+  const [saving, setSaving] = useState(false);
+
+  const PASSWORD_REGEX = /^(?=.*[A-Z])(?=.*[a-z])(?=.*\d)[A-Za-z\d@$!%*#?&._-]{8,}$/;
+
+  const handlePassChange = (field, value) => {
+    setPasswords((prev) => ({ ...prev, [field]: value }));
+  };
+
+  const handleSavePassword = async () => {
+    if (!passwords.current || !passwords.newPass || !passwords.confirm) {
+      toast.error('Missing fields', 'Please fill in all password fields.');
+      return;
+    }
+    if (!PASSWORD_REGEX.test(passwords.newPass)) {
+      toast.error('Weak password', 'Password must be at least 8 characters with an uppercase letter, a lowercase letter, and a number.');
+      return;
+    }
+    if (passwords.newPass !== passwords.confirm) {
+      toast.error('Mismatch', 'New password and confirmation do not match.');
+      return;
+    }
+    setSaving(true);
+    try {
+      await authService.changePassword({
+        current_password: passwords.current,
+        new_password: passwords.newPass,
+        new_password_confirmation: passwords.confirm,
+      });
+      toast.success('Password changed', 'Your password has been updated successfully.');
+      setPasswords({ current: '', newPass: '', confirm: '' });
+    } catch (error) {
+      const message = error.response?.data?.errors?.current_password?.[0]
+        || error.response?.data?.errors?.new_password?.[0]
+        || error.response?.data?.message
+        || 'Failed to change password.';
+      toast.error('Password not changed', message);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  // Live checklist so people see WHY a password is rejected before they press the button.
+  const requirements = [
+    { label: 'At least 8 characters', ok: passwords.newPass.length >= 8 },
+    { label: 'An uppercase letter', ok: /[A-Z]/.test(passwords.newPass) },
+    { label: 'A lowercase letter', ok: /[a-z]/.test(passwords.newPass) },
+    { label: 'A number', ok: /\d/.test(passwords.newPass) },
+    { label: 'Matches the confirmation', ok: passwords.newPass.length > 0 && passwords.newPass === passwords.confirm },
+  ];
+
+  // PasswordInput owns the reveal toggle, so a hand-rolled type={show ? 'text' : 'password'} here
+  // would put Chrome's own reveal button on top of ours again - the duplicated eye.
+  const passwordField = (label, field, icon) => (
+    <PasswordInput
+      label={label}
+      value={passwords[field]}
+      onChange={(e) => handlePassChange(field, e.target.value)}
+      placeholder={label}
+      autoComplete="new-password"
+      minLength={8}
+      icon={icon}
+    />
+  );
+
+  return (
+    <div className="space-y-6">
+      <Card>
+        <CardHeader>
+          <div>
+            <CardTitle>Change Password</CardTitle>
+            <CardDescription>Update your password regularly to keep your account secure</CardDescription>
+          </div>
+        </CardHeader>
+
+        {user?.email && (
+          <div className="mb-5 flex items-center gap-2 rounded-xl bg-gray-50 border border-gray-100 px-3.5 py-2.5 text-sm text-gray-600 max-w-md">
+            <Mail className="w-4 h-4 text-gray-400 shrink-0" />
+            <span>Signed in as <span className="font-semibold text-gray-900">{user.email}</span></span>
+          </div>
+        )}
+
+        <div className="space-y-4 max-w-md">
+          {passwordField('Current Password', 'current', Lock)}
+          {passwordField('New Password', 'newPass', Key)}
+          {passwordField('Confirm New Password', 'confirm', Key)}
+          <ul className="grid grid-cols-1 sm:grid-cols-2 gap-x-4 gap-y-1.5 pt-1">
+            {requirements.map((r) => (
+              <li key={r.label} className={`flex items-center gap-1.5 text-xs ${r.ok ? 'text-emerald-600' : 'text-gray-400'}`}>
+                {r.ok ? <Check className="w-3.5 h-3.5" /> : <Circle className="w-3 h-3" />}
+                {r.label}
+              </li>
+            ))}
+          </ul>
+        </div>
+
+        <div className="flex justify-end mt-6">
+          <Button icon={Lock} loading={saving} onClick={handleSavePassword}>Update Password</Button>
+        </div>
+      </Card>
+    </div>
+  );
+}
+
+export function AppearanceSection() {
+  const { fontSize, setFontSize } = useTheme();
+
+  const fontSizes = [
+    { id: 'small', label: 'Small', text: 'text-xs' },
+    { id: 'medium', label: 'Medium', text: 'text-sm' },
+    { id: 'large', label: 'Large', text: 'text-base' },
+  ];
+
+  return (
+    <div className="space-y-6">
+      <Card>
+        <CardHeader>
+          <div>
+            <CardTitle>Font Size</CardTitle>
+            <CardDescription>Adjust the text size across the application</CardDescription>
+          </div>
+        </CardHeader>
+
+        <div className="flex gap-3">
+          {fontSizes.map((fs) => (
+            <button
+              key={fs.id}
+              onClick={() => setFontSize(fs.id)}
+              className={`flex-1 rounded-xl border-2 px-4 py-3 text-center transition-all duration-200 ${
+                fontSize === fs.id
+                  ? 'border-blue-500 bg-blue-50 text-blue-700'
+                  : 'border-gray-200 text-gray-600 hover:border-gray-300'
+              }`}
+            >
+              <span className={`font-medium ${fs.text}`}>{fs.label}</span>
+            </button>
+          ))}
+        </div>
+
+        <InfoNote>Applies immediately - this is a display preference for this device only, not saved to your account.</InfoNote>
+      </Card>
+    </div>
+  );
+}

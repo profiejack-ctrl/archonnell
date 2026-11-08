@@ -1,0 +1,925 @@
+import { useState, useMemo, useEffect } from 'react';
+import { useSearchParams } from 'react-router-dom';
+import { CheckCircle, AlertTriangle, Timer, Coffee, MapPin, Clock, X, Check, Hand, ClipboardCheck } from 'lucide-react';
+import Card from '../../components/ui/Card';
+import Button from '../../components/ui/Button';
+import Badge from '../../components/ui/Badge';
+import Avatar from '../../components/ui/Avatar';
+import SearchBar from '../../components/ui/SearchBar';
+import FilterMenu from '../../components/ui/FilterMenu';
+import DateRangePicker from '../../components/ui/DateRangePicker';
+import Modal from '../../components/ui/Modal';
+import TableShell from '../../components/ui/TableShell';
+import TableFilters from '../../components/ui/TableFilters';
+import Input, { Select, Textarea } from '../../components/ui/Input';
+import { Pagination } from '../../components/ui/Table';
+import { SkeletonTable } from '../../components/ui/LoadingSkeleton';
+import { adjustmentService, attendanceService, employeeService, overtimeService } from '../../services/api';
+import CorrectionsAdmin from '../../components/attendance/CorrectionsAdmin';
+import { kioskService } from '../../services/kioskService';
+import { formatHours, toDateKey } from '../../services/attendanceService';
+import { formatDate, formatTime } from '../../utils/helpers';
+import { weekOf, todayKey } from '../../utils/today';
+import { attendanceFlagsFor } from '../../utils/attendanceFlags';
+import useApiData from '../../hooks/useApiData';
+import { useToast } from '../../context/ToastContext';
+import { useAuth } from '../../context/AuthContext';
+import {
+  EARLY_CLOCKOUT_REASON_LABELS,
+  EARLY_CLOCKOUT_CLASSIFICATION_META,
+  EARLY_CLOCKOUT_REASON_STATUS_META,
+  EARLY_CLOCKOUT_CLASSIFICATION_OPTIONS,
+} from '../../utils/constants';
+
+const statusVariant = { Present: 'success', Late: 'warning', Absent: 'danger', 'Early Leave': 'amber', 'On Leave': 'default' };
+const overtimeStatusVariant = { Pending: 'warning', Approved: 'success', Rejected: 'danger', Cancelled: 'default' };
+
+function formatMinutesShort(minutes) {
+  const h = Math.floor((minutes || 0) / 60);
+  const m = (minutes || 0) % 60;
+  if (h > 0 && m > 0) return `${h}h ${m}m`;
+  return h > 0 ? `${h}h` : `${m}m`;
+}
+
+export default function Attendance() {
+  const { toast } = useToast();
+  const { user } = useAuth();
+  const [searchParams] = useSearchParams();
+  const initialTab = searchParams.get('view') === 'early' ? 'early'
+    : searchParams.get('tab') === 'overtime' ? 'overtime'
+      : searchParams.get('tab') === 'corrections' ? 'corrections' : 'attendance';
+  const [activeTab, setActiveTab] = useState(initialTab);
+  const [employees, setEmployees] = useState([]);
+  // Corrections waiting for a decision: shown as a badge on the tab, and refreshed after each decision
+  const { data: pendingCorrections, refresh: refreshPendingCorrections } = useApiData(() => adjustmentService.getAll({ status: 'Pending' }), []);
+  // Links from the AI Decision Support tab open this page already filtered (?search=Name&status=Late&period=Today)
+  const [search, setSearch] = useState(searchParams.get('search') || '');
+  const [statusFilter, setStatusFilter] = useState(searchParams.get('status') || 'All');
+  // A date range, picked on a calendar. This was a row of period buckets ("All", "Today", "This Week",
+  // "Last 30 Days"), and the buckets were the only way in - so finding one specific day meant opening the
+  // week it fell in and reading past everything else in it. A range is the question actually being asked.
+  // ?period= is still honoured on arrival so an old bookmark lands on something sensible.
+  const [dateRange, setDateRange] = useState(() => {
+    const period = searchParams.get('period');
+    if (period === 'today') return { from: todayKey(), to: todayKey() };
+    if (period === 'week') {
+      const w = weekOf(todayKey());
+      return { from: w.start, to: todayKey() };
+    }
+    if (period === 'month') return { from: `${todayKey().slice(0, 7)}-01`, to: todayKey() };
+    return { from: null, to: null };
+  });
+
+  const [currentPage, setCurrentPage] = useState(1);
+  const PAGE_SIZE = 12;
+
+  const {
+    data: attendanceRecords,
+    refresh: refreshAttendance,
+  } = useApiData(
+    () => attendanceService.getAll(),
+    []
+  );
+
+  const {
+    data: overtimeRecords,
+    loading: loadingOvertime,
+    refresh: refreshOvertime,
+  } = useApiData(() => overtimeService.getAll(), []);
+
+  const [overtimeSearch, setOvertimeSearch] = useState(searchParams.get('search') || '');
+  const [overtimeStatusFilter, setOvertimeStatusFilter] = useState('All');
+  // Department used to be a collapsible grouping with a nested table per department. It is a filter
+  // now: one table, one list, and a control to narrow it. The grouping meant a reader had to open a
+  // section to discover what was in it, and on a phone each nested table was its own horizontal
+  // scroll - so a single question ("who in Support is waiting?") meant scrolling through five of them.
+  const [overtimeDeptFilter, setOvertimeDeptFilter] = useState('All');
+  const [, setOvertimePage] = useState(1);
+  const [selectedOvertime, setSelectedOvertime] = useState(null);
+  const [deciding, setDeciding] = useState(false);
+  const [approveHours, setApproveHours] = useState('');
+  const [approveComment, setApproveComment] = useState('');
+
+  const {
+    data: earlyRecords,
+    loading: loadingEarly,
+    refresh: refreshEarly,
+  } = useApiData(() => attendanceService.getEarlyClockOuts(), []);
+
+  const [earlySearch, setEarlySearch] = useState(searchParams.get('search') || '');
+  const [earlyFilter, setEarlyFilter] = useState('All');
+  const [selectedEarly, setSelectedEarly] = useState(null);
+  const [earlyClassify, setEarlyClassify] = useState('');
+  
+  const [classifying, setClassifying] = useState(false);
+
+  useEffect(() => {
+    employeeService.getAll()
+      .then(setEmployees)
+      .catch(() => setEmployees([]));
+  }, []);
+
+  const enrichedOvertime = useMemo(() => {
+    return (overtimeRecords || []).map(req => {
+      const emp = employees.find(e => e.id === req.employeeId);
+      return { ...req, firstName: emp?.firstName || '', lastName: emp?.lastName || '', avatar: emp?.avatar, department: emp?.department || '' };
+    });
+  }, [overtimeRecords, employees]);
+
+  const overtimeStats = useMemo(() => ({
+    pending: (overtimeRecords || []).filter(r => r.status === 'Pending').length,
+    approved: (overtimeRecords || []).filter(r => r.status === 'Approved').length,
+    rejected: (overtimeRecords || []).filter(r => r.status === 'Rejected').length,
+  }), [overtimeRecords]);
+
+  const filteredOvertime = useMemo(() => {
+    return enrichedOvertime.filter(r => {
+      const name = `${r.firstName} ${r.lastName}`.toLowerCase();
+      const matchSearch = !overtimeSearch || name.includes(overtimeSearch.toLowerCase());
+      const matchStatus = overtimeStatusFilter === 'All' || r.status === overtimeStatusFilter;
+      const matchDept = overtimeDeptFilter === 'All' || (r.department || 'Unassigned') === overtimeDeptFilter;
+      return matchSearch && matchStatus && matchDept;
+    }).sort((a, b) => b.requestedDate.localeCompare(a.requestedDate));
+  }, [enrichedOvertime, overtimeSearch, overtimeStatusFilter, overtimeDeptFilter]);
+
+  const openOvertime = (req) => {
+    setApproveHours(req.expectedHours ? String(req.expectedHours) : '');
+    setApproveComment(req.comments || '');
+    setDeciding(false);
+    setSelectedOvertime(req);
+  };
+
+  /*
+    The department list is built from the requests themselves, not from the employee roster.
+
+    A department with nobody who has ever asked for overtime has nothing to filter to, so offering it
+    would produce an empty table and look like the filter had failed. Sorted, with Unassigned last,
+    because a row with no department is the one case worth noticing rather than scanning past.
+  */
+  const overtimeDeptOptions = useMemo(() => {
+    const seen = new Map();
+    for (const r of enrichedOvertime) {
+      const dept = r.department || 'Unassigned';
+      seen.set(dept, (seen.get(dept) || 0) + 1);
+    }
+    return [...seen.keys()]
+      .sort((a, b) => (a === 'Unassigned' ? 1 : b === 'Unassigned' ? -1 : a.localeCompare(b)))
+      .map((d) => ({ value: d, label: d }));
+  }, [enrichedOvertime]);
+
+  const clearOvertimeFilters = () => {
+    setOvertimeSearch('');
+    setOvertimeStatusFilter('All');
+    setOvertimeDeptFilter('All');
+    setOvertimePage(1);
+  };
+
+  const enrichedEarly = useMemo(() => {
+    return (earlyRecords || []).map(rec => {
+      const emp = employees.find(e => e.id === rec.employeeId);
+      return { ...rec, firstName: emp?.firstName || '', lastName: emp?.lastName || '', avatar: emp?.avatar, department: emp?.department || '' };
+    });
+  }, [earlyRecords, employees]);
+
+  const earlyStats = useMemo(() => ({
+    pending: (earlyRecords || []).filter(r => r.classification === 'PENDING_REVIEW').length,
+    excused: (earlyRecords || []).filter(r => (r.classification || '').startsWith('EXCUSED_')).length,
+    unpaid: (earlyRecords || []).filter(r => r.classification === 'UNPAID').length,
+  }), [earlyRecords]);
+
+  const filteredEarly = useMemo(() => {
+    return enrichedEarly
+      .filter(r => {
+        const name = `${r.firstName} ${r.lastName}`.toLowerCase();
+        const matchSearch = !earlySearch || name.includes(earlySearch.toLowerCase());
+        const matchFilter = earlyFilter === 'All' || r.classification === earlyFilter;
+        return matchSearch && matchFilter;
+      })
+      .sort((a, b) => `${b.date}`.localeCompare(`${a.date}`));
+  }, [enrichedEarly, earlySearch, earlyFilter]);
+
+  const openEarly = (rec) => {
+    setEarlyClassify(rec.classification === 'PENDING_REVIEW' ? '' : rec.classification);
+    setSelectedEarly(rec);
+  };
+
+  const handleEarlyClassify = async () => {
+    if (!selectedEarly || !earlyClassify) return;
+    setClassifying(true);
+    try {
+      await attendanceService.classifyEarlyClockOut(selectedEarly.id, earlyClassify);
+      await refreshEarly();
+      setSelectedEarly(null);
+      toast.success('Classification Saved', 'The early clock-out has been classified.');
+    } catch (err) {
+      // e.g. "No medical certificate is attached..." - say why, not just "failed".
+      toast.error('Could not save', err?.response?.data?.message || 'Failed to save the classification.');
+    } finally {
+      setClassifying(false);
+    }
+  };
+
+  const handleOvertimeDecision = async (status) => {
+    if (!selectedOvertime) return;
+    // <Button> already locks itself when the click returns a promise, so a second tap on Approve
+    // cannot double up. Approve and Reject are two separate buttons, though, and one of each is two
+    // different decisions on the same request - the second would land last and quietly win. This is
+    // what makes the pair a decision rather than two.
+    if (deciding) return;
+    setDeciding(true);
+    const approvedBy = user ? `${user.firstName} ${user.lastName}` : 'HR Admin';
+    const approvedHours = status === 'Approved' && approveHours !== '' ? Number(approveHours) : undefined;
+    const comments = approveComment.trim() || undefined;
+    try {
+      await overtimeService.updateStatus(selectedOvertime.id, status, approvedBy, approvedHours, comments);
+      await refreshOvertime();
+      setSelectedOvertime(null);
+      toast.success(
+        status === 'Approved' ? 'Overtime Approved' : status === 'Pending' ? 'Overtime Reopened' : 'Overtime Rejected',
+        status === 'Pending' ? 'The request is waiting for a decision again.' : `Overtime request has been ${status.toLowerCase()}.`
+      );
+    } catch {
+      toast.error('Error', `Failed to ${status === 'Approved' ? 'approve' : status === 'Pending' ? 'reopen' : 'reject'} overtime request.`);
+    } finally {
+      setDeciding(false);
+    }
+  };
+
+  const todayStr = kioskService.today();
+  const yesterdayStr = (() => { const d = new Date(todayStr); d.setDate(d.getDate() - 1); return toDateKey(d); })();
+
+  const enriched = useMemo(() => {
+    return (attendanceRecords || []).map(a => {
+      const emp = employees.find(e => e.id === a.employeeId);
+      return { ...a, firstName: emp?.firstName || '', lastName: emp?.lastName || '', avatar: emp?.avatar, department: emp?.department || '' };
+    });
+  }, [attendanceRecords, employees]);
+
+  const todayRecords = useMemo(() => enriched.filter(a => a.date === todayStr), [enriched, todayStr]);
+
+  const stats = useMemo(() => ({
+    onTime: todayRecords.filter(a => a.status === 'Present').length,
+    late: todayRecords.filter(a => a.status === 'Late').length,
+    present: todayRecords.filter(a => a.status === 'Present' || a.status === 'Late').length,
+    absent: enriched.filter(a => a.status === 'Absent' && a.date === yesterdayStr).length,
+    avgOvertime: todayRecords.length ? (todayRecords.reduce((s, a) => s + (a.overtime || 0), 0) / todayRecords.length).toFixed(1) : '0.0',
+  }), [todayRecords, enriched, yesterdayStr]);
+
+  const filtered = useMemo(() => {
+    return enriched.filter(a => {
+      const name = `${a.firstName} ${a.lastName}`.toLowerCase();
+      const matchSearch = !search || name.includes(search.toLowerCase());
+      const matchStatus = statusFilter === 'All' || a.status === statusFilter;
+      // An open-ended range (the calendar's first click) is not a filter yet, so it matches everything
+      // rather than silently showing nothing while the reader is still choosing the end day.
+      const matchRange = !dateRange.from || !dateRange.to
+        || (a.date >= dateRange.from && a.date <= dateRange.to);
+      return matchSearch && matchStatus && matchRange;
+    });
+  }, [enriched, search, statusFilter, dateRange.from, dateRange.to]);
+
+  const totalPages = Math.ceil(filtered.length / PAGE_SIZE);
+  const paginated = filtered.slice((currentPage - 1) * PAGE_SIZE, currentPage * PAGE_SIZE);
+
+  return (
+    <div className="space-y-6 animate-fadeIn">
+      {/* Header */}
+      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+        <div>
+          <h1 className="text-2xl font-bold text-gray-900">Time & Attendance</h1>
+          <p className="text-[14px] text-gray-500 mt-1">
+            {activeTab === 'overtime'
+              ? 'Decide on overtime requests. Only approved overtime is counted and paid.'
+              : activeTab === 'early'
+                ? 'Review employees who clocked out before the end of their shift.'
+                : activeTab === 'corrections'
+                  ? 'Review employees who worked past their shift or whose kiosk failed, and make the manual entry.'
+                  : 'Who came in, who was late and who was absent. Days are closed automatically after midnight.'}
+          </p>
+        </div>
+      </div>
+
+      {/* Tabs */}
+      {/* Four tabs do not fit across a phone. Kept on one line and given their own scroller, so the
+          row slides under a finger instead of shoving the whole page sideways; w-fit without a
+          scroller is what made the content area 40px too wide. */}
+      <div className="flex border border-gray-200 rounded-xl overflow-hidden w-fit max-w-full overflow-x-auto">
+        {[
+          { key: 'attendance', label: 'Attendance Records' },
+          { key: 'overtime', label: 'Overtime Requests' },
+          { key: 'early', label: 'Early Clock Outs' },
+          { key: 'corrections', label: 'Corrections' },
+        ].map(tab => (
+          <button
+            key={tab.key}
+            onClick={() => setActiveTab(tab.key)}
+            className={`shrink-0 whitespace-nowrap px-6 py-3.5 text-sm font-medium transition-colors ${
+              activeTab === tab.key ? 'bg-blue-50 text-blue-600' : 'text-gray-500 hover:bg-gray-50'
+            }`}
+          >
+            {tab.label}
+            {tab.key === 'overtime' && overtimeStats.pending > 0 && (
+              <span className="ml-1.5 inline-flex items-center justify-center min-w-[18px] h-[18px] px-1 text-[10px] font-semibold rounded-full bg-amber-100 text-amber-700">
+                {overtimeStats.pending}
+              </span>
+            )}
+            {tab.key === 'early' && earlyStats.pending > 0 && (
+              <span className="ml-1.5 inline-flex items-center justify-center min-w-[18px] h-[18px] px-1 text-[10px] font-semibold rounded-full bg-amber-100 text-amber-700">
+                {earlyStats.pending}
+              </span>
+            )}
+            {tab.key === 'corrections' && (pendingCorrections?.length || 0) > 0 && (
+              <span className="ml-1.5 inline-flex items-center justify-center min-w-[18px] h-[18px] px-1 text-[10px] font-semibold rounded-full bg-amber-100 text-amber-700">
+                {pendingCorrections.length}
+              </span>
+            )}
+          </button>
+        ))}
+      </div>
+
+      {activeTab === 'attendance' ? (
+      <>
+      {/* Stats */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+        {[
+          { label: 'Present Today', value: stats.present, sub: `${stats.onTime} on time · ${stats.late} late`, icon: CheckCircle, color: 'emerald' },
+          { label: 'Late Today', value: stats.late, icon: AlertTriangle, color: 'amber' },
+          { label: 'Absent Yesterday', value: stats.absent, sub: 'Recorded automatically after each day', icon: Coffee, color: 'red' },
+          { label: 'Avg Overtime Today', value: `${stats.avgOvertime}h`, icon: Timer, color: 'blue' },
+        ].map(s => {
+          const colorMap = { emerald: 'bg-emerald-50 text-emerald-600', red: 'bg-red-50 text-red-600', amber: 'bg-amber-50 text-amber-600', blue: 'bg-blue-50 text-blue-600' };
+          const barMap = { emerald: 'bg-emerald-500', red: 'bg-red-500', amber: 'bg-amber-500', blue: 'bg-blue-500' };
+          return (
+            <Card key={s.label} className="overflow-hidden" hover>
+              <div className="flex items-center justify-between">
+                <div>
+                  <p className="text-sm text-gray-500">{s.label}</p>
+                  <p className="text-2xl font-bold text-gray-900 mt-1">{s.value}</p>
+                  {s.sub && <p className="text-xs text-gray-400 mt-0.5">{s.sub}</p>}
+                </div>
+                <div className={`w-12 h-12 rounded-xl flex items-center justify-center ${colorMap[s.color]}`}>
+                  <s.icon className="w-6 h-6" />
+                </div>
+              </div>
+              <div className={`h-1 rounded-full mt-4 ${barMap[s.color]}`} />
+            </Card>
+          );
+        })}
+      </div>
+
+      {/* Attendance History */}
+      <Card padding={false}>
+        <div className="p-5 border-b border-gray-100">
+          <div className="flex items-center justify-between flex-wrap gap-3">
+            <div>
+              <h3 className="text-base font-semibold text-gray-900">Attendance History</h3>
+              <p className="text-sm text-gray-500 mt-0.5">Track employee clock-ins, hours, and status</p>
+            </div>
+            <div className="flex flex-wrap items-center gap-2.5">
+              <SearchBar value={search} onChange={(v) => { setSearch(v); setCurrentPage(1); }} placeholder="Search employee..." className="w-full sm:w-64" />
+              <DateRangePicker
+                value={dateRange}
+                onChange={(next) => { setDateRange(next); setCurrentPage(1); }}
+                allTimeLabel="All time"
+              />
+              <FilterMenu label="Status" value={statusFilter} defaultValue="All" className="min-w-[10rem]"
+                onChange={(v) => { setStatusFilter(v); setCurrentPage(1); }}
+                options={[['All', 'All statuses'], ['Present', 'Present'], ['Late', 'Late'], ['Absent', 'Absent'], ['Early Leave', 'Early Leave'], ['On Leave', 'On Leave']].map(([value, label]) => ({ value, label }))} />
+            </div>
+          </div>
+        </div>
+
+        <TableShell minWidth="min-w-[900px]">
+          <table className="w-full">
+            <thead>
+              <tr className="border-b border-gray-200 bg-gray-50/80">
+                {['Employee', 'Date', 'Clock In', 'Clock Out', 'Regular', 'Break', 'Overtime', 'Total', 'Status', 'Location'].map(h => (
+                  <th key={h} className="px-6 py-3.5 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider">{h}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-gray-100">
+              {filtered.length === 0 ? (
+                <tr><td colSpan={10} className="px-6 py-12 text-center text-gray-400 text-sm">No attendance records found</td></tr>
+              ) : (
+                paginated.map((a, i) => (
+                  <tr key={a.id || i} className="hover:bg-blue-50/30 transition-colors">
+                    <td className="px-6 py-4">
+                      <div className="flex items-center gap-3">
+                        <Avatar firstName={a.firstName} lastName={a.lastName} size="sm" src={a.avatar} />
+                        <div>
+                          <p className="font-medium text-sm text-gray-900">{a.firstName} {a.lastName}</p>
+                          <p className="text-xs text-gray-500">{a.department}</p>
+                        </div>
+                      </div>
+                    </td>
+                    <td className="px-6 py-4 text-sm text-gray-900 font-medium">{formatDate(a.date)}</td>
+                    <td className="px-6 py-4 text-sm text-gray-700">{a.clockIn ? formatTime(a.clockIn) : '-'}</td>
+                    <td className="px-6 py-4 text-sm text-gray-700">{a.clockOut ? formatTime(a.clockOut) : <span className="text-amber-500 italic">Still in</span>}</td>
+                    <td className="px-6 py-4 text-sm text-gray-900 font-medium">{a.clockIn && a.clockOut ? `${formatHours(a.regularHours)}h` : '-'}</td>
+                    <td className="px-6 py-4 text-sm text-gray-700">{a.clockIn && a.clockOut ? `${formatHours(a.breakHours || 0)}h` : '-'}</td>
+                    <td className="px-6 py-4 text-sm text-gray-700">
+                      {a.overtime > 0 ? (
+                        <span className="flex items-center gap-1">
+                          <span className={(a.overtimeReconciliation?.status === 'unauthorized' || a.overtimeReconciliation?.status === 'overrun') ? 'text-amber-600 font-medium' : 'text-blue-600 font-medium'}>
+                            {formatHours(a.overtime)}h
+                          </span>
+                          {a.overtimeReconciliation?.status === 'unauthorized' && (
+                            <AlertTriangle className="w-3.5 h-3.5 text-amber-500" title={`Unauthorized overtime - no approved request for ${formatDate(a.date)}`} />
+                          )}
+                          {a.overtimeReconciliation?.status === 'overrun' && (
+                            <AlertTriangle className="w-3.5 h-3.5 text-amber-500" title={`Overtime overrun - ${formatHours(a.overtimeReconciliation.approvedHours)}h approved, ${formatHours(a.overtimeReconciliation.actualHours)}h clocked`} />
+                          )}
+                        </span>
+                      ) : '-'}
+                    </td>
+                    <td className="px-6 py-4 text-sm text-gray-900 font-semibold">{a.clockIn && a.clockOut ? `${formatHours(a.totalHours)}h` : '-'}</td>
+                    <td className="px-6 py-4">
+                      <Badge variant={statusVariant[a.status]} dot size="xs">{a.status}</Badge>
+                      {attendanceFlagsFor(a).length > 0 && (
+                        <div className="mt-1.5 flex flex-wrap items-center gap-1">
+                          {attendanceFlagsFor(a).map((f) => (
+                            <Badge key={f.key} variant={f.tone} size="xs">{f.label}</Badge>
+                          ))}
+                        </div>
+                      )}
+                    </td>
+                    <td className="px-6 py-4">
+                      <div className="flex items-center gap-1.5 text-sm text-gray-600">
+                        <MapPin className="w-3.5 h-3.5 text-gray-400" />
+                        <span className="truncate max-w-[120px]" title={a.location}>{a.location || '-'}</span>
+                      </div>
+                    </td>
+                  </tr>
+                ))
+              )}
+            </tbody>
+          </table>
+        </TableShell>
+
+        {totalPages > 1 && (
+          <div className="px-4 border-t border-gray-100">
+            <Pagination currentPage={currentPage} totalPages={totalPages} onPageChange={setCurrentPage} />
+          </div>
+        )}
+      </Card>
+      </>
+      ) : activeTab === 'overtime' ? (
+      <>
+      {/* Overtime Stats */}
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+        {[
+          { label: 'Pending', value: overtimeStats.pending, icon: Clock, color: 'amber' },
+          { label: 'Approved', value: overtimeStats.approved, icon: CheckCircle, color: 'emerald' },
+          { label: 'Rejected', value: overtimeStats.rejected, icon: AlertTriangle, color: 'red' },
+        ].map(s => {
+          const colorMap = { emerald: 'bg-emerald-50 text-emerald-600', red: 'bg-red-50 text-red-600', amber: 'bg-amber-50 text-amber-600' };
+          const barMap = { emerald: 'bg-emerald-500', red: 'bg-red-500', amber: 'bg-amber-500' };
+          return (
+            <Card key={s.label} className="overflow-hidden" hover>
+              <div className="flex items-center justify-between">
+                <div>
+                  <p className="text-sm text-gray-500">{s.label}</p>
+                  <p className="text-2xl font-bold text-gray-900 mt-1">{s.value}</p>
+                </div>
+                <div className={`w-12 h-12 rounded-xl flex items-center justify-center ${colorMap[s.color]}`}>
+                  <s.icon className="w-6 h-6" />
+                </div>
+              </div>
+              <div className={`h-1 rounded-full mt-4 ${barMap[s.color]}`} />
+            </Card>
+          );
+        })}
+      </div>
+
+      {/* Filters + Bulk Actions */}
+      <div className="space-y-3">
+        <TableFilters
+          search={overtimeSearch}
+          onSearchChange={(v) => { setOvertimeSearch(v); setOvertimePage(1); }}
+          searchPlaceholder="Search employee..."
+          onClear={clearOvertimeFilters}
+          resultCount={filteredOvertime.length}
+          totalCount={enrichedOvertime.length}
+          filters={[
+            {
+              key: 'dept',
+              label: 'Filter by department',
+              value: overtimeDeptFilter,
+              onChange: (v) => { setOvertimeDeptFilter(v); setOvertimePage(1); },
+              options: [{ value: 'All', label: 'All Departments' }, ...overtimeDeptOptions],
+            },
+            {
+              key: 'status',
+              label: 'Filter by status',
+              value: overtimeStatusFilter,
+              onChange: (v) => { setOvertimeStatusFilter(v); setOvertimePage(1); },
+              options: [
+                { value: 'All', label: 'All Status' },
+                { value: 'Pending', label: 'Pending' },
+                { value: 'Approved', label: 'Approved' },
+                { value: 'Rejected', label: 'Rejected' },
+                { value: 'Cancelled', label: 'Cancelled' },
+              ],
+            },
+          ]}
+        />
+
+        <Card padding={false}>
+          {loadingOvertime ? (
+            <div className="p-4"><SkeletonTable rows={6} cols={6} /></div>
+          ) : filteredOvertime.length === 0 ? (
+            <div className="px-4 py-12 text-center text-gray-400 text-sm">No overtime requests found</div>
+          ) : (
+            <TableShell minWidth="min-w-[640px]">
+              <table className="w-full">
+                <thead>
+                  <tr className="border-b border-gray-200 bg-gray-50/80">
+                    {['Employee', 'Department', 'Date', 'Expected Hours', 'Reason', 'Status', ''].map(h => (
+                      <th key={h} className="px-6 py-3.5 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider">{h}</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-gray-100">
+                  {filteredOvertime.map((r) => (
+                    <tr key={r.id} className="transition-colors hover:bg-blue-50/30">
+                      <td className="px-6 py-4">
+                        <div className="flex items-center gap-3">
+                          <Avatar firstName={r.firstName} lastName={r.lastName} size="sm" src={r.avatar} />
+                          <p className="font-medium text-sm text-gray-900">{r.firstName} {r.lastName}</p>
+                        </div>
+                      </td>
+                      <td className="px-6 py-4 text-sm text-gray-500 whitespace-nowrap">{r.department || 'Unassigned'}</td>
+                      <td className="px-6 py-4 text-sm text-gray-700 whitespace-nowrap">{formatDate(r.date)}</td>
+                      <td className="px-6 py-4 text-sm text-gray-700 whitespace-nowrap">
+                        {r.status === 'Approved' && r.approvedHours != null
+                          ? <span><span className="font-medium text-gray-900">{formatHours(r.approvedHours)}h</span> <span className="text-gray-400">(of {r.expectedHours ? `${formatHours(r.expectedHours)}h` : '-'})</span></span>
+                          : r.expectedHours ? `${formatHours(r.expectedHours)}h` : '-'}
+                      </td>
+                      <td className="px-6 py-4 text-sm text-gray-600 max-w-[16rem] truncate" title={r.reason}>{r.reason}</td>
+                      <td className="px-6 py-4"><Badge variant={overtimeStatusVariant[r.status] || 'default'} dot size="xs">{r.status}</Badge></td>
+                      <td className="px-6 py-4">
+                        {/* The only way into an overtime decision, so it cannot be a bare word
+                            with no padding around it - on a phone that is not a tap target. */}
+                        <button
+                          onClick={() => openOvertime(r)}
+                          className="-m-1.5 px-1.5 py-1.5 pointer-coarse:px-2.5 pointer-coarse:py-2.5 rounded-lg text-xs font-semibold text-blue-600 hover:text-blue-700 hover:bg-blue-50 transition-colors"
+                        >
+                          View
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </TableShell>
+          )}
+        </Card>
+      </div>
+      </>
+      ) : activeTab === 'corrections' ? (
+      <CorrectionsAdmin onChanged={() => { refreshPendingCorrections(); refreshAttendance(); refreshOvertime(); }} />
+      ) : (
+      <>
+      {/* Early Clock Outs Stats */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+        {[
+          { label: 'Pending Review', value: earlyStats.pending, icon: Hand, color: 'amber' },
+          { label: 'Excused', value: earlyStats.excused, icon: CheckCircle, color: 'emerald' },
+          { label: 'Unpaid', value: earlyStats.unpaid, icon: AlertTriangle, color: 'red' },
+        ].map(s => {
+          const colorMap = { emerald: 'bg-emerald-50 text-emerald-600', red: 'bg-red-50 text-red-600', amber: 'bg-amber-50 text-amber-600' };
+          const barMap = { emerald: 'bg-emerald-500', red: 'bg-red-500', amber: 'bg-amber-500' };
+          return (
+            <Card key={s.label} className="overflow-hidden" hover>
+              <div className="flex items-center justify-between">
+                <div>
+                  <p className="text-sm text-gray-500">{s.label}</p>
+                  <p className="text-2xl font-bold text-gray-900 mt-1">{s.value}</p>
+                </div>
+                <div className={`w-12 h-12 rounded-xl flex items-center justify-center ${colorMap[s.color]}`}>
+                  <s.icon className="w-6 h-6" />
+                </div>
+              </div>
+              <div className={`h-1 rounded-full mt-4 ${barMap[s.color]}`} />
+            </Card>
+          );
+        })}
+      </div>
+
+      {/* Early Clock-Out Review Queue */}
+      <Card padding={false}>
+        <div className="p-4 border-b border-gray-100">
+          <div className="flex items-center justify-between flex-wrap gap-3">
+            <div>
+              <h3 className="font-semibold text-gray-900">Early Clock-Out Review</h3>
+              <p className="text-xs text-gray-500 mt-0.5">
+                Punches are never vetoed - the employee already left. Classify the shortfall in payroll terms here.
+              </p>
+            </div>
+            <div className="flex flex-wrap items-center gap-3">
+              <SearchBar value={earlySearch} onChange={setEarlySearch} placeholder="Search employee..." className="w-full sm:w-64" />
+              <FilterMenu label="Class" value={earlyFilter} defaultValue="All" className="min-w-[12rem]" align="right"
+                onChange={setEarlyFilter}
+                options={[['All', 'All classifications'], ['PENDING_REVIEW', 'Pending review'], ['EXCUSED_SICK', 'Excused (Sick)'], ['EXCUSED_EMERGENCY', 'Excused (Emergency)'], ['EXCUSED_EARLY_LEAVE', 'Excused (Early Leave)'], ['UNPAID', 'Unpaid']].map(([value, label]) => ({ value, label }))} />
+            </div>
+          </div>
+        </div>
+
+        {loadingEarly ? (
+          <div className="p-4"><SkeletonTable rows={6} cols={6} /></div>
+        ) : filteredEarly.length === 0 ? (
+          <div className="px-4 py-12 text-center text-gray-400 text-sm">No early clock-outs to review</div>
+        ) : (
+          <TableShell minWidth="min-w-[760px]">
+            <table className="w-full">
+              <thead>
+                <tr className="border-b border-gray-200 bg-gray-50/80">
+                  {['Employee', 'Date', 'Clocked Out', 'Scheduled End', 'Time Lost', 'Reason', 'Classification', ''].map(h => (
+                    <th key={h} className="px-6 py-3.5 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider">{h}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-gray-100">
+                {filteredEarly.map((rec) => {
+                  const meta = EARLY_CLOCKOUT_CLASSIFICATION_META[rec.classification] || EARLY_CLOCKOUT_CLASSIFICATION_META.PENDING_REVIEW;
+                  return (
+                    <tr key={rec.id} className="hover:bg-blue-50/30 transition-colors">
+                      <td className="px-6 py-4">
+                        <div className="flex items-center gap-3">
+                          <Avatar firstName={rec.firstName} lastName={rec.lastName} size="sm" src={rec.avatar} />
+                          <div>
+                            <p className="font-medium text-sm text-gray-900">{rec.firstName} {rec.lastName}</p>
+                            <p className="text-xs text-gray-500">{rec.department}</p>
+                          </div>
+                        </div>
+                      </td>
+                      <td className="px-6 py-4 text-sm text-gray-700 whitespace-nowrap">{formatDate(rec.date)}</td>
+                      <td className="px-6 py-4 text-sm text-gray-700 tabular-nums">{formatTime(rec.actualClockOutTime)}</td>
+                      <td className="px-6 py-4 text-sm text-gray-500 tabular-nums">{formatTime(rec.scheduledEndTime)}</td>
+                      <td className="px-6 py-4 text-sm text-amber-600 font-medium">{formatMinutesShort(rec.minutesEarly)}</td>
+                      <td className="px-6 py-4 text-sm text-gray-600 max-w-[220px]">
+                        {rec.reasonCode ? (
+                          <span className="font-medium text-gray-900">{EARLY_CLOCKOUT_REASON_LABELS[rec.reasonCode] || rec.reasonCode}</span>
+                        ) : (
+                          <span className="text-gray-400 italic">No reason</span>
+                        )}
+                        {rec.reasonNote && (
+                          <p className="text-xs text-gray-400 mt-0.5 truncate" title={rec.reasonNote}>{rec.reasonNote}</p>
+                        )}
+                        {EARLY_CLOCKOUT_REASON_STATUS_META[rec.reasonStatus] && (
+                          <div className="mt-1">
+                            <Badge variant={EARLY_CLOCKOUT_REASON_STATUS_META[rec.reasonStatus].variant} size="xs">
+                              {EARLY_CLOCKOUT_REASON_STATUS_META[rec.reasonStatus].label}
+                            </Badge>
+                          </div>
+                        )}
+                      </td>
+                      <td className="px-6 py-4"><Badge variant={meta.variant} dot size="xs">{meta.label}</Badge></td>
+                      <td className="px-6 py-4 text-right">
+                        <button onClick={() => openEarly(rec)} className="text-xs font-semibold text-blue-600 hover:text-blue-700 transition-colors">
+                          {rec.classification === 'PENDING_REVIEW' ? 'Classify' : 'Review'}
+                        </button>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </TableShell>
+        )}
+      </Card>
+      </>
+      )}
+
+      <Modal isOpen={!!selectedOvertime} onClose={() => setSelectedOvertime(null)} title="Overtime Request" size="md">
+        {selectedOvertime && (
+          <div className="space-y-4">
+            <div className="flex items-center gap-3">
+              <Avatar firstName={selectedOvertime.firstName} lastName={selectedOvertime.lastName} size="md" src={selectedOvertime.avatar} />
+              <div>
+                <p className="font-semibold text-gray-900">{selectedOvertime.firstName} {selectedOvertime.lastName}</p>
+                <p className="text-xs text-gray-500">{selectedOvertime.department}</p>
+              </div>
+            </div>
+            <div className="grid grid-cols-2 gap-4 text-sm">
+              <div>
+                <p className="text-xs text-gray-400">Date</p>
+                <p className="font-medium text-gray-900 mt-0.5">{formatDate(selectedOvertime.date)}</p>
+              </div>
+              <div>
+                <p className="text-xs text-gray-400">Expected Hours</p>
+                <p className="font-medium text-gray-900 mt-0.5">{selectedOvertime.expectedHours ? `${formatHours(selectedOvertime.expectedHours)}h` : 'Not specified'}</p>
+              </div>
+              <div>
+                <p className="text-xs text-gray-400">Requested On</p>
+                <p className="font-medium text-gray-900 mt-0.5">{formatDate(selectedOvertime.requestedDate)}</p>
+              </div>
+              <div>
+                <p className="text-xs text-gray-400">Status</p>
+                <Badge variant={overtimeStatusVariant[selectedOvertime.status] || 'default'} dot size="xs" className="mt-1">{selectedOvertime.status}</Badge>
+              </div>
+              {selectedOvertime.status === 'Approved' && (
+                <>
+                  <div>
+                    <p className="text-xs text-gray-400">Approved Hours</p>
+                    <p className="font-medium text-emerald-700 mt-0.5">{selectedOvertime.approvedHours != null ? `${formatHours(selectedOvertime.approvedHours)}h` : '-'}</p>
+                  </div>
+                  <div>
+                    <p className="text-xs text-gray-400">Approved By</p>
+                    <p className="font-medium text-gray-900 mt-0.5">{selectedOvertime.approvedBy || '-'}</p>
+                  </div>
+                </>
+              )}
+            </div>
+            <div>
+              <p className="text-xs text-gray-400">Reason</p>
+              <p className="text-sm text-gray-700 mt-1">{selectedOvertime.reason}</p>
+            </div>
+            {selectedOvertime.status === 'Approved' && (() => {
+              const otRecord = attendanceRecords?.find(a => a.employeeId === selectedOvertime.employeeId && a.date === selectedOvertime.date);
+              const actualOt = otRecord?.overtime || 0;
+              const approvedOt = selectedOvertime.approvedHours != null ? selectedOvertime.approvedHours : (selectedOvertime.expectedHours || 0);
+              const overrun = actualOt > approvedOt;
+              const worked = actualOt > 0;
+              return (
+                <div className="rounded-xl border border-gray-100 bg-gray-50/60 p-4">
+                  <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">Overtime Reconciliation</p>
+                  <div className="flex items-center justify-between text-sm">
+                    <span className="text-gray-600">Approved</span>
+                    <span className="font-semibold text-gray-900">{formatHours(approvedOt)}h</span>
+                  </div>
+                  <div className="flex items-center justify-between text-sm mt-1">
+                    <span className="text-gray-600">Clocked</span>
+                    <span className="font-semibold text-gray-900">{actualOt > 0 ? `${formatHours(actualOt)}h` : 'None'}</span>
+                  </div>
+                  <div className="flex items-center justify-between text-sm mt-2 pt-2 border-t border-gray-200">
+                    {overrun ? (
+                      <span className="flex items-center gap-1.5 text-amber-600 font-medium">
+                        <AlertTriangle className="w-4 h-4" /> Exceeded approval by {formatHours(actualOt - approvedOt)}h
+                      </span>
+                    ) : worked ? (
+                      <span className="flex items-center gap-1.5 text-emerald-600 font-medium">
+                        <CheckCircle className="w-4 h-4" /> Within approved hours
+                      </span>
+                    ) : (
+                      <span className="flex items-center gap-1.5 text-gray-500 font-medium">
+                        <Clock className="w-4 h-4" /> Approved but no overtime clocked
+                      </span>
+                    )}
+                  </div>
+                </div>
+              );
+            })()}
+            {selectedOvertime.comments && (
+              <div>
+                <p className="text-xs text-gray-400">Comments</p>
+                <p className="text-sm text-gray-700 mt-1 italic">{selectedOvertime.comments}</p>
+              </div>
+            )}
+            {(selectedOvertime.status === 'Approved' || selectedOvertime.status === 'Rejected') && (
+              <div className="flex items-center justify-between gap-3 pt-4 border-t border-gray-100">
+                <p className="text-xs text-gray-500">Changed your mind? Reopening puts it back in the queue and changes which hours count. It is recorded in the Audit Logs.</p>
+                <Button variant="outline" onClick={() => handleOvertimeDecision('Pending')}>Reopen</Button>
+              </div>
+            )}
+            {selectedOvertime.status === 'Pending' && (
+              <>
+                <Input
+                  label="Approve Hours"
+                  type="number"
+                  min="0"
+                  max="24"
+                  step="0.5"
+                  value={approveHours}
+                  onChange={(e) => setApproveHours(e.target.value)}
+                  placeholder={selectedOvertime.expectedHours ? `Defaults to ${selectedOvertime.expectedHours}h` : 'Hours to authorize'}
+                />
+                <Textarea
+                  label="Comment"
+                  value={approveComment}
+                  onChange={(e) => setApproveComment(e.target.value)}
+                  placeholder="Add a note for the employee (optional)"
+                  rows={2}
+                />
+                <div className="flex justify-end gap-3 pt-4 border-t border-gray-100">
+                  <Button variant="dangerOutline" icon={X} disabled={deciding} onClick={() => handleOvertimeDecision('Rejected')}>Reject</Button>
+                  <Button variant="success" icon={Check} loading={deciding} onClick={() => handleOvertimeDecision('Approved')}>Approve</Button>
+                </div>
+              </>
+            )}
+          </div>
+        )}
+      </Modal>
+
+      <Modal isOpen={!!selectedEarly} onClose={() => setSelectedEarly(null)} title="Classify Early Clock Out" size="md">
+        {selectedEarly && (
+          <div className="space-y-4">
+            <div className="flex items-center gap-3">
+              <Avatar firstName={selectedEarly.firstName} lastName={selectedEarly.lastName} size="md" src={selectedEarly.avatar} />
+              <div>
+                <p className="font-semibold text-gray-900">{selectedEarly.firstName} {selectedEarly.lastName}</p>
+                <p className="text-xs text-gray-500">{selectedEarly.department}</p>
+              </div>
+            </div>
+            <div className="grid grid-cols-2 gap-4 text-sm">
+              <div>
+                <p className="text-xs text-gray-400">Date</p>
+                <p className="font-medium text-gray-900 mt-0.5">{formatDate(selectedEarly.date)}</p>
+              </div>
+              <div>
+                <p className="text-xs text-gray-400">Time Lost</p>
+                <p className="font-medium text-amber-600 mt-0.5">{formatMinutesShort(selectedEarly.minutesEarly)}</p>
+              </div>
+              <div>
+                <p className="text-xs text-gray-400">Clocked Out At</p>
+                <p className="font-medium text-gray-900 mt-0.5 tabular-nums">{formatTime(selectedEarly.actualClockOutTime)}</p>
+              </div>
+              <div>
+                <p className="text-xs text-gray-400">Scheduled End</p>
+                <p className="font-medium text-gray-900 mt-0.5 tabular-nums">{formatTime(selectedEarly.scheduledEndTime)}</p>
+              </div>
+            </div>
+            <div className="rounded-xl border border-gray-100 bg-gray-50/60 p-4">
+              <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Employee Reason</p>
+              {selectedEarly.reasonCode ? (
+                <>
+                  <p className="text-sm font-medium text-gray-900 mt-1.5">
+                    {EARLY_CLOCKOUT_REASON_LABELS[selectedEarly.reasonCode] || selectedEarly.reasonCode}
+                  </p>
+                  {selectedEarly.reasonNote && (
+                    <p className="text-sm text-gray-600 mt-1">{selectedEarly.reasonNote}</p>
+                  )}
+                </>
+              ) : (
+                <p className="text-sm text-gray-500 italic mt-1.5">No reason provided yet - the employee can add one under My Attendance.</p>
+              )}
+            </div>
+            {selectedEarly.reasonCode === 'SICK' && (
+              <div className={`rounded-xl border p-4 ${selectedEarly.proof?.length ? 'border-emerald-100 bg-emerald-50/60' : 'border-amber-100 bg-amber-50/60'}`}>
+                <p className="text-xs font-semibold uppercase tracking-wide text-gray-600">Medical Certificate</p>
+                {selectedEarly.proof?.length ? (
+                  <ul className="mt-1.5 space-y-1">
+                    {selectedEarly.proof.map((p, i) => (
+                      <li key={i} className="text-sm">
+                        <a href={p.dataUrl} download={p.name || `certificate-${i + 1}`} className="font-medium text-blue-600 hover:underline">
+                          {p.name || `Certificate ${i + 1}`}
+                        </a>
+                        <span className="text-xs text-gray-400"> - download to review</span>
+                      </li>
+                    ))}
+                  </ul>
+                ) : (
+                  <p className="text-sm text-amber-800 mt-1.5">
+                    No certificate attached yet.
+                    {selectedEarly.proofDueAt
+                      ? ` Due ${new Date(selectedEarly.proofDueAt).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}; after that it becomes unexcused automatically.`
+                      : ''}
+                    {' '}Excusing it as Sick needs a certificate.
+                  </p>
+                )}
+              </div>
+            )}
+            <div className="grid grid-cols-2 gap-4 text-sm">
+              <div>
+                <p className="text-xs text-gray-400">Current Status</p>
+                <Badge variant={(EARLY_CLOCKOUT_CLASSIFICATION_META[selectedEarly.classification] || EARLY_CLOCKOUT_CLASSIFICATION_META.PENDING_REVIEW).variant} dot size="xs" className="mt-1">
+                  {EARLY_CLOCKOUT_CLASSIFICATION_META[selectedEarly.classification]?.label || 'Pending Review'}
+                </Badge>
+              </div>
+              {selectedEarly.classifiedBy && (
+                <div>
+                  <p className="text-xs text-gray-400">Classified By</p>
+                  <p className="font-medium text-gray-900 mt-1">{selectedEarly.classifiedBy}</p>
+                </div>
+              )}
+            </div>
+            {selectedEarly.classificationNote && (
+              <div className="rounded-xl border border-amber-100 bg-amber-50/60 p-3">
+                <p className="text-xs font-semibold text-amber-700 uppercase tracking-wide">System Note</p>
+                <p className="text-sm text-amber-800 mt-1">{selectedEarly.classificationNote}</p>
+              </div>
+            )}
+            <Select
+              label="Classification"
+              value={earlyClassify}
+              onChange={(e) => setEarlyClassify(e.target.value)}
+            >
+              <option value="">Select a classification...</option>
+              {EARLY_CLOCKOUT_CLASSIFICATION_OPTIONS.map(({ value, label }) => (
+                <option key={value} value={value}>{label}</option>
+              ))}
+            </Select>
+            <p className="text-xs text-gray-400">
+              Classifying only adjusts the payroll consequence of the shortfall. The punch remains valid regardless.
+            </p>
+            <div className="flex justify-end gap-3 pt-4 border-t border-gray-100">
+              <Button variant="outline" onClick={() => setSelectedEarly(null)} disabled={classifying}>Cancel</Button>
+              <Button icon={ClipboardCheck} loading={classifying} disabled={!earlyClassify} onClick={handleEarlyClassify}>Save Classification</Button>
+            </div>
+          </div>
+        )}
+      </Modal>
+    </div>
+  );
+}

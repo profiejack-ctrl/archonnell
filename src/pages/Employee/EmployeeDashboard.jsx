@@ -1,0 +1,661 @@
+﻿import { useEffect, useMemo, useRef, useState } from 'react';
+import { useNavigate, Link } from 'react-router-dom';
+import {
+  Clock, CalendarDays, CalendarCheck, Hourglass,
+  Briefcase, Plus,
+  Fingerprint, FileText, CalendarClock, Calendar, ArrowRight,
+  Shield, Building2, BadgeCheck, DoorOpen, User, Settings, Inbox, ChevronLeft, ChevronRight,
+  Sparkles, Bell, Info,
+} from 'lucide-react';
+import {
+  BarChart, Bar, Cell, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
+} from 'recharts';
+import { useAuth } from '../../context/AuthContext';
+import { useNotifications } from '../../context/NotificationContext';
+import TodayBadge from '../../components/common/TodayBadge';
+import { todayKey, todayRowClass, coversToday, thisWeek, weekOf, weekWithRecords, dayTick, weekRangeLabel } from '../../utils/today';
+import { scheduleOutcome, SCHEDULE_BADGE } from '../../utils/scheduleOutcome';
+import { notificationTypeConfig } from '../../constants/notificationTypes';
+import Badge from '../../components/ui/Badge';
+import Avatar from '../../components/ui/Avatar';
+import Button from '../../components/ui/Button';
+import KpiCard from '../../components/dashboard/KpiCard';
+import { SkeletonList, SkeletonPage } from '../../components/ui/LoadingSkeleton';
+import useApiData from '../../hooks/useApiData';
+import { attendanceService, leaveService, shiftService, timesheetService, profileService, overtimeService, analyticsService } from '../../services/api';
+import { formatDate, formatTime, getRelativeTime } from '../../utils/helpers';
+import { didAttend } from '../../utils/constants';
+import { useTheme } from '../../context/ThemeContext';
+import { chartTheme } from '../../constants/chartTheme';
+
+
+const leaveTypeBadge = (type) => {
+  const map = {
+    Vacation: 'primary', Sick: 'success', Special: 'purple', Bereavement: 'indigo',
+    Maternity: 'pink', Paternity: 'info', Unpaid: 'teal', Emergency: 'warning',
+  };
+  return map[type] || 'default';
+};
+
+const statusBadge = (status) => {
+  const map = { Approved: 'success', Pending: 'warning', Rejected: 'danger' };
+  return map[status] || 'default';
+};
+
+
+const EmptyChart = ({ message }) => (
+  <div className="h-full flex flex-col items-center justify-center text-center px-4">
+    <div className="w-14 h-14 rounded-2xl bg-gray-100 flex items-center justify-center mb-3">
+      <Inbox className="w-7 h-7 text-gray-300" />
+    </div>
+    <p className="text-sm font-semibold text-gray-900">No data yet</p>
+    <p className="text-xs text-gray-500 mt-1 max-w-xs leading-relaxed">{message}</p>
+  </div>
+);
+
+// App-style shortcuts: a big icon tile with a short name underneath (nothing gets cut off).
+const quickActions = [
+  { label: 'My Attendance', hint: 'Clock-ins & hours', path: '/my-attendance', icon: Fingerprint, tile: 'from-blue-500 to-blue-600 shadow-blue-500/25' },
+  { label: 'Leave', hint: 'Apply & track', path: '/leave', icon: Calendar, tile: 'from-emerald-500 to-emerald-600 shadow-emerald-500/25' },
+  { label: 'My Timesheet', hint: 'Weekly hours', path: '/my-timesheet', icon: FileText, tile: 'from-purple-500 to-purple-600 shadow-purple-500/25' },
+  { label: 'My Schedule', hint: 'Upcoming shifts', path: '/my-schedule', icon: CalendarClock, tile: 'from-amber-500 to-orange-500 shadow-amber-500/25' },
+  { label: 'My Profile', hint: 'Details & contact', path: '/my-profile', icon: User, tile: 'from-sky-500 to-cyan-600 shadow-sky-500/25' },
+  { label: 'Settings', hint: 'Password & look', path: '/settings', icon: Settings, tile: 'from-slate-500 to-slate-600 shadow-slate-500/25' },
+];
+
+const CustomTooltip = ({ active, payload }) => {
+  if (!active || !payload || !payload.length) return null;
+  const d = payload[0].payload;
+  return (
+    <div className="bg-white rounded-xl shadow-lg border border-gray-100 p-3 min-w-[170px]">
+      <p className="text-sm font-semibold text-gray-900">{formatDate(d.date)}</p>
+      <p className="text-xs text-gray-500 mt-0.5">{d.status || (d.future ? 'Not yet' : 'No record')}</p>
+      {d.clockIn && (
+        <p className="text-xs text-gray-600 mt-1.5">
+          {formatTime(String(d.clockIn).slice(0, 5))}{d.clockOut ? ` – ${formatTime(String(d.clockOut).slice(0, 5))}` : ' – still in'}
+        </p>
+      )}
+      {d.hours > 0 && <p className="text-xs text-gray-600">{d.hours}h worked{d.overtime > 0 ? ` · ${d.overtime}h overtime` : ''}</p>}
+    </div>
+  );
+};
+
+export default function EmployeeDashboard() {
+  const { isDark } = useTheme();
+  const chart = chartTheme(isDark);
+  const COLORS = chart.colors;
+  const { user } = useAuth();
+  const navigate = useNavigate();
+  const employeeId = user?.id || 'EMP001';
+
+  // The signed-in session only carries name/email/role - department, position and employment type
+  // live on the Employee record itself, same as My Profile reads them.
+  const { data: profile } = useApiData(() => profileService.get(), []);
+
+  const { data: attendanceRecords, loading: loadingAttendance } = useApiData(
+    () => attendanceService.getByEmployeeId(employeeId),
+    [employeeId]
+  );
+  const { data: leavesRecords, loading: loadingLeaves } = useApiData(
+    () => leaveService.getByEmployeeId(employeeId),
+    [employeeId]
+  );
+  const { data: schedules, loading: loadingSchedules } = useApiData(
+    () => shiftService.getScheduleByEmployeeId(employeeId),
+    [employeeId]
+  );
+  const { data: shiftDefs, loading: loadingShiftDefs } = useApiData(
+    () => shiftService.getAllShifts(),
+    []
+  );
+  const { data: timesheetRecords, loading: loadingTimesheets } = useApiData(
+    () => timesheetService.getByEmployeeId(employeeId),
+    [employeeId]
+  );
+  const { data: leaveBalances, loading: loadingBalances } = useApiData(
+    () => leaveService.getBalances(employeeId),
+    [employeeId]
+  );
+  const { data: earlyOuts } = useApiData(
+    () => attendanceService.getEarlyClockOutsByEmployee(employeeId),
+    [employeeId]
+  );
+  const { data: overtimeRecords } = useApiData(
+    () => overtimeService.getByEmployeeId(employeeId),
+    [employeeId]
+  );
+  // The same punctuality-based read admins see in the Top Performer popup, scoped to this employee's
+  // own record - reads only attendance + punctuality, same as there, so it is never confused for a
+  // full performance review.
+  const { data: myCard } = useApiData(
+    () => analyticsService.getEmployeeCard(employeeId, 'month'),
+    [employeeId]
+  );
+  const { notifications } = useNotifications();
+
+  // Only the two requests the numbers are actually worked out from hold the page. The rest of the
+  // sections below draw themselves as their own data lands, instead of the whole screen waiting on
+  // whichever of the seven requests happened to be slowest.
+  const dashboardLoading = loadingAttendance || loadingBalances;
+  const scheduleLoading = loadingSchedules || loadingShiftDefs;
+  const leaveListLoading = loadingLeaves;
+
+  const myAttendance = useMemo(
+    () => (attendanceRecords || [])
+      .filter((a) => a.employeeId === employeeId)
+      .sort((a, b) => a.date.localeCompare(b.date)),
+    [attendanceRecords, employeeId]
+  );
+
+  const myLeaves = useMemo(
+    () => (leavesRecords || [])
+      .filter((l) => l.employeeId === employeeId)
+      .sort((a, b) => b.appliedDate.localeCompare(a.appliedDate)),
+    [leavesRecords, employeeId]
+  );
+
+  // Every one of my shifts, newest at the top. This used to take the last 7 rows in whatever order the
+  // server returned them, so the list started at an old date and ignored most of the schedule.
+  const mySchedule = useMemo(
+    () => (schedules || [])
+      .filter((s) => s.employeeId === employeeId)
+      .sort((a, b) => b.date.localeCompare(a.date)),
+    [schedules, employeeId]
+  );
+  const shiftListRef = useRef(null);
+  // The list is newest-first, so upcoming shifts sit above today: open it scrolled to today's shift.
+  useEffect(() => {
+    const box = shiftListRef.current;
+    const row = box?.querySelector('[data-today="true"]');
+    if (box && row) box.scrollTop += row.getBoundingClientRect().top - box.getBoundingClientRect().top;
+  }, [loadingSchedules, loadingShiftDefs, mySchedule.length]);
+
+  const attendanceByDate = useMemo(() => {
+    const map = {};
+    (attendanceRecords || []).forEach((a) => { if (a.employeeId === employeeId && !map[a.date]) map[a.date] = a; });
+    return map;
+  }, [attendanceRecords, employeeId]);
+
+  const myTimesheet = useMemo(
+    () => (timesheetRecords || [])
+      .filter((t) => t.employeeId === employeeId)
+      .sort((a, b) => b.weekEnd.localeCompare(a.weekEnd))[0] || null,
+    [timesheetRecords, employeeId]
+  );
+
+  // One Monday-to-Sunday week - the week the admin overview draws too - that the employee can page back
+  // through (up to 12 weeks). Seven real days with a fixed bar width keep the shape identical for everyone.
+  const [weeksBack, setWeeksBack] = useState(0);
+  // First paint lands on the most recent week with an actual record, not always the current one -
+  // otherwise the chart opens empty every Monday morning before today's first clock-in.
+  const weeksBackInitialized = useRef(false);
+  useEffect(() => {
+    if (weeksBackInitialized.current || myAttendance.length === 0) return;
+    weeksBackInitialized.current = true;
+    setWeeksBack(weekWithRecords(myAttendance.map((a) => a.date)).weeksBack);
+  }, [myAttendance]);
+  const attendanceWeek = useMemo(() => {
+    const [y, m, d] = weekOf(todayKey()).start.split('-').map(Number);
+    const monday = new Date(Date.UTC(y, m - 1, d - 7 * weeksBack));
+    const days = Array.from({ length: 7 }, (_, i) => new Date(monday.getTime() + i * 86400000).toISOString().slice(0, 10));
+    return { days, weeksBack, start: days[0], end: days[6] };
+  }, [weeksBack]);
+
+  const STATUS_COLOR = { Present: COLORS.emerald, Late: COLORS.amber, 'Early Leave': COLORS.blue, Absent: COLORS.red, 'On Leave': COLORS.sky };
+  const chartData = useMemo(() => {
+    const today = todayKey();
+    return attendanceWeek.days.map((date) => {
+      const a = attendanceByDate[date] || null;
+      const worked = a && a.clockIn && a.clockOut ? a.totalHours || 0 : 0;
+      return {
+        date,
+        day: dayTick(date),
+        status: a ? a.status : null,
+        future: date > today,
+        clockIn: a?.clockIn || null,
+        clockOut: a?.clockOut || null,
+        overtime: a?.overtime || 0,
+        hours: Math.round(worked * 10) / 10,
+        // Absent / on-leave days have no hours, so they get a short marker bar instead of nothing.
+        bar: worked > 0 ? Math.round(worked * 10) / 10 : (a && (a.status === 'Absent' || a.status === 'On Leave') ? 0.6 : 0),
+      };
+    });
+  }, [attendanceWeek, attendanceByDate]);
+
+  const weekCounts = useMemo(() => {
+    const c = { Present: 0, Late: 0, 'Early Leave': 0, Absent: 0, hours: 0 };
+    chartData.forEach((d) => { if (d.status && c[d.status] !== undefined) c[d.status] += 1; c.hours += d.hours; });
+    c.hours = Math.round(c.hours * 10) / 10;
+    return c;
+  }, [chartData]);
+
+  const isCurrentAttendanceWeek = weeksBack === 0;
+  const attendanceRangeLabel = weekRangeLabel(attendanceWeek.start, attendanceWeek.end);
+
+  // Overtime hours requested, by week, the last 6 weeks (oldest to newest) - every week appears even
+  // with nothing filed, so a quiet month reads as "0h" rather than a missing bar.
+  const otWeeks = useMemo(() => {
+    const records = (overtimeRecords || []).filter((r) => r.employeeId === employeeId);
+    const base = weekOf(todayKey()).start.split('-').map(Number);
+    const weeks = [];
+    for (let back = 5; back >= 0; back--) {
+      const monday = new Date(Date.UTC(base[0], base[1] - 1, base[2] - 7 * back));
+      const start = monday.toISOString().slice(0, 10);
+      const end = new Date(monday.getTime() + 6 * 86400000).toISOString().slice(0, 10);
+      const hours = records
+        .filter((r) => r.date >= start && r.date <= end)
+        .reduce((sum, r) => sum + Number(r.expectedHours || 0), 0);
+      weeks.push({ label: `${monday.getUTCMonth() + 1}/${monday.getUTCDate()}`, hours: Math.round(hours * 10) / 10 });
+    }
+    return weeks;
+  }, [overtimeRecords, employeeId]);
+
+
+  // This week = Monday to Sunday (ISO 8601); only days that are finished (clocked out) count
+  const hoursThisWeek = useMemo(() => {
+    const { start, end } = thisWeek();
+    return myAttendance
+      .filter((a) => a.date >= start && a.date <= end)
+      .reduce((sum, a) => sum + (a.clockIn && a.clockOut ? a.totalHours || 0 : 0), 0);
+  }, [myAttendance]);
+
+  const leaveBalance = useMemo(() => {
+    const balances = (leaveBalances || []).filter((b) => b.requiresBalance);
+    const vacation = balances.find((b) => b.type === 'Vacation');
+    if (vacation) return vacation.remaining;
+    return balances.reduce((sum, b) => sum + b.remaining, 0);
+  }, [leaveBalances]);
+
+  const pendingCount = myLeaves.filter((l) => l.status === 'Pending').length;
+  // Same definition as My Attendance and Workforce Analytics: days I came in (on time, late or left
+  // early) out of the days I was expected - approved leave is not held against me. This used to count
+  // only on-time days, so the dashboard and My Attendance showed two different "Attendance Rate"s.
+  const attendanceRate = (() => {
+    const counted = myAttendance.filter((a) => a.status !== 'On Leave');
+    return counted.length ? Math.round((counted.filter((a) => didAttend(a.status)).length / counted.length) * 100) : 0;
+  })();
+
+  const todayDay = todayKey();
+  const todayEarly = useMemo(
+    () => (earlyOuts || []).find((e) => e.date === todayDay),
+    [earlyOuts, todayDay]
+  );
+
+  const earlyInfo = todayEarly ? (
+    <div className="flex items-center gap-5 p-5 rounded-2xl border border-amber-100 bg-amber-50/70">
+      <div className="w-11 h-11 rounded-xl bg-amber-400/20 flex items-center justify-center shrink-0">
+        <DoorOpen className="w-5 h-5 text-amber-600" />
+      </div>
+      <div className="flex-1 min-w-0">
+        <p className="text-sm font-semibold text-amber-800">Early leave today</p>
+        <p className="text-xs text-amber-700 mt-0.5">
+          You clocked out {todayEarly.minutesEarly ? `${todayEarly.minutesEarly} min early` : 'early'} today
+          {todayEarly.classification === 'UNPAID'
+            ? ' · classified as Unpaid'
+            : todayEarly.classification === 'PENDING_REVIEW'
+              ? ' · pending HR review'
+              : todayEarly.classification
+                ? ' · excused'
+                : ''}.
+        </p>
+      </div>
+      <Badge
+        variant={
+          todayEarly.classification === 'UNPAID'
+            ? 'danger'
+            : todayEarly.classification === 'PENDING_REVIEW' || !todayEarly.classification
+              ? 'warning'
+              : 'success'}
+        size="sm"
+      >
+        {todayEarly.classification === 'UNPAID'
+          ? 'Unpaid'
+          : todayEarly.classification === 'PENDING_REVIEW' || !todayEarly.classification
+            ? 'Pending Review'
+            : 'Excused'}
+      </Badge>
+      <Link to="/my-attendance" className="inline-flex items-center gap-1 text-xs font-semibold text-amber-700 hover:text-amber-900 transition-colors shrink-0">
+        Review <ArrowRight className="w-3.5 h-3.5" />
+      </Link>
+    </div>
+  ) : null;
+
+  if (dashboardLoading) {
+    return <SkeletonPage kpiCount={4} />;
+  }
+
+  return (
+    <div className="space-y-7">
+      {/* Page Header */}
+      <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-6 animate-fadeIn">
+        <div className="flex flex-col sm:flex-row sm:items-start gap-5">
+          <Avatar firstName={user?.firstName} lastName={user?.lastName} size="2xl" src={user?.avatar} />
+          <div className="flex-1 min-w-0">
+            <div className="flex flex-col sm:flex-row sm:items-center gap-3 flex-wrap">
+              <h1 className="text-2xl font-bold text-gray-900 tracking-tight">
+                Welcome back, {user?.firstName}!
+              </h1>
+              <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-blue-50 border border-blue-100">
+                <BadgeCheck className="w-3.5 h-3.5 text-blue-600" />
+                <span className="text-[12px] font-bold text-blue-700 tracking-wide font-mono">{user?.id || 'EMP001'}</span>
+              </div>
+            </div>
+            <p className="text-sm text-gray-400 mt-1">Here's what's happening with your work today.</p>
+            <div className="flex flex-wrap items-center gap-2 mt-3">
+              {profile?.department && (
+                <Badge variant="default" size="xs"><Building2 className="w-3 h-3" />{profile.department}</Badge>
+              )}
+              {profile?.position && (
+                <Badge variant="default" size="xs"><Briefcase className="w-3 h-3" />{profile.position}</Badge>
+              )}
+              {profile?.employmentType && (
+                <Badge variant="indigo" size="xs"><BadgeCheck className="w-3 h-3" />{profile.employmentType}</Badge>
+              )}
+              {profile?.probationary && <Badge variant="warning" size="xs">Probationary</Badge>}
+              {/* Separate from Probationary - a short, deliberately shorter window (30 days) just to
+                  say "still settling in", not a statement about statutory employment status. */}
+              {profile?.newlyHired && <Badge variant="info" size="xs">New Hire</Badge>}
+              <Badge variant="success" size="xs"><Shield className="w-3 h-3" />Identity verified via facial recognition</Badge>
+            </div>
+          </div>
+          <div className="flex items-center gap-2 text-sm text-gray-500 bg-gray-50 px-4 py-2.5 rounded-xl border border-gray-100 shrink-0">
+            <CalendarDays className="w-4 h-4 text-gray-400" />
+            <span className="font-medium">{formatDate(new Date().toISOString())}</span>
+          </div>
+        </div>
+      </div>
+
+      {/* KPI Row */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
+        <KpiCard label="Hours This Week" value={`${hoursThisWeek.toFixed(1)}h`} icon={Hourglass} accent="blue" to="/my-attendance" />
+        <KpiCard label="Leave Balance" value={`${leaveBalance} days`} icon={CalendarCheck} accent="emerald" to="/leave" />
+        <KpiCard label="Attendance Rate" value={`${attendanceRate}%`} icon={CalendarDays} accent="purple" to="/my-attendance" />
+        {/* The count is worked out from leave and timesheet requests, so it stays a dash until both
+            have answered rather than briefly claiming there is nothing pending. */}
+        <KpiCard label="Pending Requests" value={loadingLeaves || loadingTimesheets ? '—' : pendingCount} icon={Clock} accent="amber" to="/leave" />
+      </div>
+
+      {/* Early Leave Today */}
+      {earlyInfo}
+
+      {/* Attendance chart + My Schedule */}
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+        <div className="lg:col-span-2 bg-white rounded-2xl border border-gray-100 shadow-sm p-6 overflow-hidden h-[336px] flex flex-col">
+          <div className="flex items-center justify-between gap-3 mb-3 shrink-0">
+            <h3 className="text-base font-semibold text-gray-900 tracking-tight">My Attendance</h3>
+            <div className="flex items-center gap-1.5">
+              <button type="button" aria-label="Previous week" disabled={weeksBack >= 12} onClick={() => setWeeksBack((w) => w + 1)}
+                className="w-7 h-7 rounded-lg border border-gray-200 text-gray-500 hover:bg-gray-50 disabled:opacity-40 disabled:hover:bg-transparent flex items-center justify-center">
+                <ChevronLeft className="w-4 h-4" />
+              </button>
+              <Badge variant="primary" size="sm">{isCurrentAttendanceWeek ? `This Week · ${attendanceRangeLabel}` : attendanceRangeLabel}</Badge>
+              <button type="button" aria-label="Next week" disabled={weeksBack === 0} onClick={() => setWeeksBack((w) => Math.max(0, w - 1))}
+                className="w-7 h-7 rounded-lg border border-gray-200 text-gray-500 hover:bg-gray-50 disabled:opacity-40 disabled:hover:bg-transparent flex items-center justify-center">
+                <ChevronRight className="w-4 h-4" />
+              </button>
+            </div>
+          </div>
+          <div className="flex-1 min-h-0">
+            {!chartData.some((d) => d.status) ? (
+              <EmptyChart message={isCurrentAttendanceWeek ? 'Your week fills in as you clock in and out from the attendance terminal.' : 'No attendance was recorded for this week.'} />
+            ) : (
+              <ResponsiveContainer width="100%" height="100%">
+                {/* barSize is the whole point: without it recharts divides the plot by the number of bars,
+                    so one record becomes a single block as wide as the card. */}
+                <BarChart data={chartData} barSize={34} barCategoryGap="18%" margin={{ top: 8, right: 8, left: -12, bottom: 0 }}>
+                  <CartesianGrid strokeDasharray="3 3" stroke={chart.grid} vertical={false} />
+                  <XAxis dataKey="day" axisLine={false} tickLine={false} tick={{ fontSize: 12, fill: chart.axis }} />
+                  <YAxis axisLine={false} tickLine={false} tick={{ fontSize: 12, fill: chart.axis }} unit="h" domain={[0, (max) => Math.max(10, Math.ceil(max))]} allowDecimals={false} />
+                  <Tooltip content={<CustomTooltip />} cursor={{ fill: chart.cursor }} />
+                  <Bar dataKey="bar" radius={[6, 6, 0, 0]}>
+                    {chartData.map((d) => (
+                      <Cell key={d.date} fill={STATUS_COLOR[d.status] || chart.grid} />
+                    ))}
+                  </Bar>
+                </BarChart>
+              </ResponsiveContainer>
+            )}
+          </div>
+          <div className="flex flex-wrap items-center gap-x-4 gap-y-1 pt-3 text-xs text-gray-500 shrink-0">
+            {[['Present', 'On time', COLORS.emerald], ['Late', 'Late', COLORS.amber], ['Early Leave', 'Early leave', COLORS.blue], ['Absent', 'Absent', COLORS.red]].map(([key, label, color]) => (
+              <span key={key} className="inline-flex items-center gap-1.5">
+                <span className="w-2 h-2 rounded-sm" style={{ backgroundColor: color }} />{label} <span className="font-semibold text-gray-700">{weekCounts[key]}</span>
+              </span>
+            ))}
+            <span className="ml-auto font-semibold text-gray-700">{weekCounts.hours}h worked</span>
+          </div>
+        </div>
+
+        {/* My Schedule - fixed height, scrollable list. 336px matches the My Attendance card beside
+            it (240px chart + header + padding) so the two cards line up on the row. */}
+        <div className="bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden flex flex-col h-[336px]">
+          <div className="flex items-center justify-between gap-3 px-6 pt-6 pb-3 flex-shrink-0">
+            <h3 className="text-base font-semibold text-gray-900 tracking-tight">My Shift</h3>
+            <Badge variant="primary" size="sm">{mySchedule.length} shifts</Badge>
+          </div>
+          <div ref={shiftListRef} className="divide-y divide-gray-100/70 flex-1 overflow-y-auto overflow-x-hidden">
+            {scheduleLoading ? (
+              <div className="px-6 py-4"><SkeletonList rows={3} /></div>
+            ) : (
+              <>
+            {mySchedule.length === 0 && (
+              <p className="px-6 py-6 text-sm text-gray-400 text-center">No shifts scheduled yet.</p>
+            )}
+            {mySchedule.map((entry) => {
+              const shift = (shiftDefs || []).find((s) => s.id === entry.shiftId);
+              return (
+                <div key={entry.id} data-today={entry.date === todayDay ? 'true' : undefined} className={`px-6 py-3.5 flex items-center gap-3 hover:bg-gray-50 transition-colors ${todayRowClass(entry.date)}`}>
+                  <div className="w-9 h-9 rounded-lg flex items-center justify-center shrink-0 bg-blue-50">
+                    <Briefcase className="w-4 h-4 text-blue-500" />
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <p className="text-sm font-semibold text-gray-900 truncate flex items-center gap-2">{formatDate(entry.date)}{entry.date === todayDay && <TodayBadge />}</p>
+                    <p className="text-xs text-gray-400 mt-0.5">{shift?.name} &middot; {shift ? `${formatTime(shift.startTime)} - ${formatTime(shift.endTime)}` : ''}</p>
+                  </div>
+                  <Badge variant={SCHEDULE_BADGE[scheduleOutcome(entry, attendanceByDate, todayDay)] || 'primary'} size="xs">
+                    {scheduleOutcome(entry, attendanceByDate, todayDay)}
+                  </Badge>
+              </div>
+            );
+            })}
+              </>
+            )}
+          </div>
+        </div>
+      </div>
+
+      {/* My Timesheet */}
+      {myTimesheet && (
+        <div className="bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden">
+          <div className="px-6 py-5 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+            <div>
+              <div className="flex items-center gap-2">
+                <h3 className="text-base font-semibold text-gray-900 tracking-tight">My Timesheet</h3>
+                <Badge variant={myTimesheet.status === 'Approved' ? 'success' : myTimesheet.status === 'Submitted' ? 'warning' : 'default'} size="xs">
+                  {myTimesheet.status}
+                </Badge>
+              </div>
+              <p className="text-xs text-gray-400 mt-1">
+                {formatDate(myTimesheet.weekStart)} – {formatDate(myTimesheet.weekEnd)}
+              </p>
+            </div>
+            <div className="grid grid-cols-3 gap-5 sm:gap-8">
+              <div>
+                <p className="text-[11px] text-gray-400">Regular</p>
+                <p className="text-sm font-semibold text-gray-900 mt-0.5">{Number(myTimesheet.regularHours || 0).toFixed(1)}h</p>
+              </div>
+              <div>
+                <p className="text-[11px] text-gray-400">Overtime</p>
+                <p className="text-sm font-semibold text-gray-900 mt-0.5">{Number(myTimesheet.overtimeHours || 0).toFixed(1)}h</p>
+              </div>
+              <div>
+                <p className="text-[11px] text-gray-400">Total</p>
+                <p className="text-sm font-semibold text-gray-900 mt-0.5">{Number(myTimesheet.totalHours || 0).toFixed(1)}h</p>
+              </div>
+            </div>
+            <Button variant="outline" size="sm" onClick={() => navigate('/my-timesheet')}>View Timesheet</Button>
+          </div>
+        </div>
+      )}
+
+      {/* My Leave Requests + Quick Actions */}
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+        <div className="lg:col-span-2 bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden flex flex-col h-[460px]">
+          <div className="flex items-center justify-between gap-3 px-6 pt-6 pb-3 flex-shrink-0">
+            <h3 className="text-base font-semibold text-gray-900 tracking-tight">My Leave Requests</h3>
+            <div className="flex items-center gap-3">
+              {myLeaves.length > 5 && (
+                <Link
+                  to="/leave"
+                  className="inline-flex items-center gap-1 text-xs font-semibold text-blue-600 hover:text-blue-700 transition-colors"
+                >
+                  View All
+                  <ArrowRight className="w-3.5 h-3.5" />
+                </Link>
+              )}
+              <Button variant="outline" size="xs" icon={Plus} onClick={() => navigate('/leave')}>Apply Leave</Button>
+            </div>
+          </div>
+          <div className="divide-y divide-gray-100/70 flex-1 overflow-y-auto overflow-x-hidden">
+            {leaveListLoading ? (
+              <div className="px-6 py-4"><SkeletonList rows={4} /></div>
+            ) : (
+              <>
+            {myLeaves.length === 0 && (
+              <p className="px-6 py-6 text-sm text-gray-400 text-center">You haven't filed any leave requests yet.</p>
+            )}
+            {myLeaves.map((leave) => (
+              <div key={leave.id} className="px-6 py-4 flex items-start justify-between gap-3 hover:bg-gray-50 transition-colors">
+                <div className="min-w-0">
+                  <div className="flex items-center gap-2">
+                    <Badge variant={leaveTypeBadge(leave.leaveType)} size="xs">{leave.leaveType}</Badge>
+                    <span className="text-xs text-gray-400">
+                      {formatDate(leave.startDate)}{leave.startDate !== leave.endDate ? ` - ${formatDate(leave.endDate)}` : ''}
+                    </span>
+                    {leave.status === 'Approved' && coversToday(leave.startDate, leave.endDate) && <TodayBadge>On leave today</TodayBadge>}
+                  </div>
+                  <p className="text-xs text-gray-500 mt-1.5 line-clamp-2">{leave.reason}</p>
+                </div>
+                <Badge variant={statusBadge(leave.status)} size="sm" className="shrink-0">{leave.status}</Badge>
+              </div>
+            ))}
+              </>
+            )}
+          </div>
+        </div>
+
+        {/* Quick Actions */}
+        <div className="bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden flex flex-col h-[460px]">
+          <div className="flex items-center justify-between gap-3 px-6 pt-6 pb-3 flex-shrink-0">
+            <h3 className="text-base font-semibold text-gray-900 tracking-tight">Quick Actions</h3>
+            <Badge variant="primary" size="sm">{quickActions.length} shortcuts</Badge>
+          </div>
+          <div className="flex-1 min-h-0 p-4 pt-1 grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-2 gap-2.5 auto-rows-fr">
+            {quickActions.map((action) => (
+              <button
+                key={action.label}
+                type="button"
+                onClick={() => navigate(action.path)}
+                className="group flex flex-col items-center justify-center gap-1 p-2 min-w-0 min-h-0 rounded-2xl border border-gray-100 bg-gray-50/60 hover:bg-white hover:border-blue-200 hover:shadow-md hover:-translate-y-0.5 active:translate-y-0 transition-all duration-200 text-center"
+              >
+                <span className={`w-11 h-11 rounded-xl bg-gradient-to-br ${action.tile} shadow-md flex items-center justify-center group-hover:scale-105 transition-transform duration-200`}>
+                  <action.icon className="w-5 h-5 text-white" />
+                </span>
+                <span className="text-[13px] font-semibold text-gray-900 leading-tight">{action.label}</span>
+                <span className="text-[10px] text-gray-400 leading-tight">{action.hint}</span>
+              </button>
+            ))}
+          </div>
+        </div>
+      </div>
+
+      {/* OT Requests + My Punctuality-Based Read */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-6 overflow-hidden h-[280px] flex flex-col">
+          <h3 className="text-base font-semibold text-gray-900 tracking-tight mb-3 shrink-0">OT Requests</h3>
+          <div className="flex-1 min-h-0">
+            {otWeeks.every((w) => w.hours === 0) ? (
+              <EmptyChart message="Overtime you request shows up here, by week." />
+            ) : (
+              <ResponsiveContainer width="100%" height="100%">
+                <BarChart data={otWeeks} barSize={28} margin={{ top: 8, right: 8, left: -12, bottom: 0 }}>
+                  <CartesianGrid strokeDasharray="3 3" stroke={chart.grid} vertical={false} />
+                  <XAxis dataKey="label" axisLine={false} tickLine={false} tick={{ fontSize: 12, fill: chart.axis }} />
+                  <YAxis axisLine={false} tickLine={false} tick={{ fontSize: 12, fill: chart.axis }} unit="h" allowDecimals={false} />
+                  <Tooltip cursor={{ fill: chart.cursor }} contentStyle={chart.tooltipStyle} formatter={(v) => [`${v}h`, 'Requested']} />
+                  <Bar dataKey="hours" fill={COLORS.purpleDark} radius={[6, 6, 0, 0]} />
+                </BarChart>
+              </ResponsiveContainer>
+            )}
+          </div>
+        </div>
+
+        {/* Deliberately not called "performance" - same single-signal read (attendance + punctuality
+            only) the Top Performer popup shows admins, scoped to this employee's own record. */}
+        <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-6 overflow-hidden h-[280px] flex flex-col">
+          <div className="flex items-center gap-3 mb-3 shrink-0">
+            <div className="w-9 h-9 rounded-xl bg-violet-50 flex items-center justify-center shrink-0">
+              <Sparkles className="w-4.5 h-4.5 text-violet-500" />
+            </div>
+            <h3 className="text-base font-semibold text-gray-900 tracking-tight">My Punctuality-Based Read</h3>
+          </div>
+          {!myCard ? (
+            <div className="flex-1 flex items-center justify-center text-sm text-gray-400">Loading…</div>
+          ) : (
+            <div className="flex-1 flex flex-col justify-center gap-3">
+              <div className="flex items-center gap-2 flex-wrap">
+                <Badge variant={myCard.performance.tone} size="md">{myCard.performance.label}</Badge>
+                {myCard.performance.score != null && <span className="text-xs text-gray-400">score {myCard.performance.score}</span>}
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <p className="text-[11px] text-gray-400">Attendance</p>
+                  <p className="text-xl font-bold text-gray-900 mt-0.5">{myCard.attendance.rate}%</p>
+                </div>
+                <div>
+                  <p className="text-[11px] text-gray-400">Punctuality</p>
+                  <p className="text-xl font-bold text-gray-900 mt-0.5">{myCard.punctuality.rate}%</p>
+                </div>
+              </div>
+              <p className="text-[11px] text-gray-400 flex items-start gap-1.5">
+                <Info className="w-3.5 h-3.5 shrink-0 mt-0.5" /> {myCard.performance.note}
+              </p>
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* Recent Notifications */}
+      <div className="bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden">
+        <div className="flex items-center justify-between gap-3 px-6 pt-6 pb-3">
+          <h3 className="text-base font-semibold text-gray-900 tracking-tight">Recent Notifications</h3>
+          <Link to="/notifications" className="inline-flex items-center gap-1 text-xs font-semibold text-blue-600 hover:text-blue-700 transition-colors">
+            View All <ArrowRight className="w-3.5 h-3.5" />
+          </Link>
+        </div>
+        <div className="divide-y divide-gray-100/70">
+          {notifications.length === 0 ? (
+            <p className="px-6 py-6 text-sm text-gray-400 text-center">Nothing yet - you're all caught up.</p>
+          ) : (
+            notifications.slice(0, 5).map((n) => {
+              const config = notificationTypeConfig[n.type] || notificationTypeConfig.system;
+              const NotifIcon = config.icon || Bell;
+              return (
+                <div key={n.id} className="px-6 py-3.5 flex items-start gap-3 hover:bg-gray-50 transition-colors">
+                  <div className="w-8 h-8 rounded-lg bg-gray-50 flex items-center justify-center shrink-0">
+                    <NotifIcon className="w-4 h-4 text-gray-400" />
+                  </div>
+                  <div className="min-w-0 flex-1">
+                    <p className={`text-sm truncate ${n.read ? 'text-gray-700' : 'font-semibold text-gray-900'}`}>{n.title}</p>
+                    <p className="text-xs text-gray-500 mt-0.5 line-clamp-1">{n.message}</p>
+                  </div>
+                  <span className="text-[11px] text-gray-400 shrink-0 mt-0.5">{getRelativeTime(n.timestamp)}</span>
+                </div>
+              );
+            })
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}

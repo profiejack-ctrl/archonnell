@@ -1,0 +1,1539 @@
+import { lazy, Suspense, useEffect, useMemo, useRef, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
+import clsx from 'clsx';
+import {
+  Briefcase, ScanFace, LogIn, LogOut, CheckCircle2, Loader2,
+  UserCheck, Clock, CalendarDays, Search, Hand, Lock, Delete,
+  AlertTriangle, RefreshCw, ArrowLeft, ShieldCheck, Info, ShieldAlert,
+} from 'lucide-react';
+import Button from '../../components/ui/Button';
+import Badge from '../../components/ui/Badge';
+import Avatar from '../../components/ui/Avatar';
+import KioskPinModal from '../../components/kiosk/KioskPinModal';
+import { kioskService } from '../../services/kioskService';
+import { KIOSK_LOCKED_EVENT } from '../../services/http';
+import { useToast } from '../../context/ToastContext';
+import { formatDate, formatTime, nowInTimezone } from '../../utils/helpers';
+import {
+  toDateKey,
+  toTimeString,
+  minutesFromTime,
+  calculateAttendanceStatus,
+} from '../../services/attendanceService';
+import { ATTENDANCE_CONFIG } from '../../utils/attendanceConfig';
+
+// The face reader (face-api + TensorFlow, the heaviest part of the app) is fetched once the PIN is entered,
+// not while the keypad is still on screen.
+const FaceRecognitionModal = lazy(() => import('../../components/attendance/FaceRecognitionModal'));
+
+const RESET_DELAY_MS = 1200;
+const TAP_WINDOW_MS = 2500;
+const TAP_COUNT = 5;
+// Face reader patience. The count is enforced by the server (KioskFaceLockout) and only mirrored
+// here so the screen can warn people before they are surprised; these must match it.
+const FACE_MAX_STRIKES = 5;
+const FACE_COOLDOWN_MS = 60 * 1000;
+
+const pad = (n) => String(n).padStart(2, '0');
+
+const EARLY_OUT_REASONS = [
+  { code: 'SICK', label: 'Feeling Unwell', detail: 'Sick or ill' },
+  { code: 'FAMILY_EMERGENCY', label: 'Family Emergency', detail: 'Urgent family matter' },
+  { code: 'PERSONAL_EMERGENCY', label: 'Personal Emergency', detail: 'Urgent personal matter' },
+  { code: 'OTHER', label: 'Other', detail: 'Explain in the note' },
+];
+
+const NOTICE_TONES = {
+  danger: { icon: AlertTriangle, iconWrap: 'bg-red-50', iconColor: 'text-red-500', button: 'danger' },
+  warning: { icon: AlertTriangle, iconWrap: 'bg-amber-50', iconColor: 'text-amber-500', button: 'primary' },
+  info: { icon: Info, iconWrap: 'bg-blue-50', iconColor: 'text-blue-600', button: 'primary' },
+  success: { icon: CheckCircle2, iconWrap: 'bg-emerald-50', iconColor: 'text-emerald-500', button: 'primary' },
+};
+
+const LOCK_KEYS = ['1', '2', '3', '4', '5', '6', '7', '8', '9', '', '0', 'back'];
+
+function BrandHeader({ subtitle }) {
+  return (
+    <header className="flex items-center justify-between px-6 lg:px-10 py-5">
+      <div className="flex items-center gap-3">
+        <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-blue-500 to-blue-600 flex items-center justify-center shadow-lg shadow-blue-500/20">
+          <Briefcase className="w-5 h-5 text-white" />
+        </div>
+        <div>
+          <h1 className="text-white font-bold text-[15px] leading-tight tracking-tight">Workforce Management</h1>
+          <p className="text-blue-300/60 text-[11px] font-medium">{subtitle}</p>
+        </div>
+      </div>
+    </header>
+  );
+}
+
+// The clock ticks in its own component: re-rendering the whole terminal (and the camera modal inside it) every
+// second is what made the screen stutter while a face was being scanned.
+function LiveClock({ timezone }) {
+  const [tzNow, setTzNow] = useState(() => nowInTimezone(timezone));
+  useEffect(() => {
+    const clock = setInterval(() => setTzNow(nowInTimezone(timezone)), 1000);
+    return () => clearInterval(clock);
+  }, [timezone]);
+
+  return (
+    <div className="text-center px-4">
+      <p className="text-5xl sm:text-6xl font-bold text-white tabular-nums tracking-tight drop-shadow-lg">
+        {tzNow.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
+      </p>
+      <p className="text-blue-200/70 text-base sm:text-lg mt-2 font-medium">
+        {tzNow.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' })}
+      </p>
+    </div>
+  );
+}
+
+// Employee ID entry rules. Employee IDs are a fixed code (EMP + 8 digits), and a fragment must
+// never resolve to a person: this used to accept any employee whose ID *ended with* the digits typed
+// so far, so a single keystroke like 2 jumped straight to whoever happened to finish their ID with 2.
+// At a kiosk the next tap is a clock-in, so that is a wrong-face-on-the-wrong-record failure. Accept
+// the whole code, or the whole number part of it, and nothing shorter. Partial input is only ever
+// used to say how much is still missing, never to choose someone.
+const normalizeId = (value) => String(value ?? '').trim().toUpperCase();
+
+// Every complete form an ID can be typed as: the full code, and the digits on their own.
+const idForms = (id) => {
+  const full = normalizeId(id);
+  const digits = full.replace(/\D/g, '');
+  return digits && digits !== full ? [full, digits] : [full];
+};
+
+export default function AttendanceTerminal() {
+  const navigate = useNavigate();
+  const { toast } = useToast();
+
+  const [settings, setSettings] = useState(() => kioskService.getSettings());
+  const enabled = settings.active === true;
+  const [unlocked, setUnlocked] = useState(() => kioskService.isUnlocked());
+
+  const timezone = settings?.timezone || 'Asia/Manila';
+  const [phase, setPhase] = useState('mode');
+  const [action, setAction] = useState(null);
+  const [query, setQuery] = useState('');
+  const [candidate, setCandidate] = useState(null);
+  const [employee, setEmployee] = useState(null);
+  const [todayRecord, setTodayRecord] = useState(null);
+  const [conflict, setConflict] = useState(null);
+  const [recordedType, setRecordedType] = useState(null);
+  const [recordedAt, setRecordedAt] = useState(null);
+  const [recordedHours, setRecordedHours] = useState(null);
+  const [shiftInfo, setShiftInfo] = useState(null);
+  const [notice, setNotice] = useState(null);
+  const [faceLockUntil, setFaceLockUntil] = useState(null);
+  const [clockInOutcome, setClockInOutcome] = useState(null);
+  const [clockOutOutcome, setClockOutOutcome] = useState(null);
+  const [earlyLeaveInfo, setEarlyLeaveInfo] = useState(null);
+  const [earlyOutReason, setEarlyOutReason] = useState({ reasonCode: null, reasonNote: '' });
+  const [serverCheckPending, setServerCheckPending] = useState(false);
+  const faceStrikes = useRef(0);
+  // The server's proof of a matched face (from verify-face); the clock-in/out must carry it.
+  const faceTicket = useRef(null);
+
+  const [lockPin, setLockPin] = useState('');
+  const [lockError, setLockError] = useState(null);
+  const [lockSubmitting, setLockSubmitting] = useState(false);
+  const [showUnlock, setShowUnlock] = useState(false);
+  const [unlockError, setUnlockError] = useState(null);
+  const [unlockSubmitting, setUnlockSubmitting] = useState(false);
+  // Only the face-reader cooldown needs a ticking value; it runs while that screen is showing.
+  const [now, setNow] = useState(() => new Date());
+
+  const [directory, setDirectory] = useState([]);
+  const resetTimer = useRef(null);
+  const searchRef = useRef(null);
+  const taps = useRef([]);
+
+  // The server says this device is no longer unlocked (the day ended, or the PIN was changed):
+  // fall back to the PIN screen instead of showing errors on every clock-in.
+  // (Kiosk mode itself also turns off at midnight, so re-reading the settings shows the "disabled" screen.)
+  useEffect(() => {
+    const relock = () => {
+      setUnlocked(false);
+      kioskService.load().then(setSettings).catch(() => {});
+    };
+    window.addEventListener(KIOSK_LOCKED_EVENT, relock);
+    return () => window.removeEventListener(KIOSK_LOCKED_EVENT, relock);
+  }, []);
+
+  // The unlock and kiosk mode both end at midnight: switch the screen off at that moment instead of failing
+  // on the next clock-in.
+  const sessionEndsAt = unlocked ? kioskService.sessionEndsAt() : null;
+  const sessionEndLabel = sessionEndsAt
+    ? new Date(sessionEndsAt * 1000).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', timeZone: timezone })
+    : 'midnight';
+  useEffect(() => {
+    if (!sessionEndsAt) return undefined;
+    const wait = Math.max(0, sessionEndsAt * 1000 - Date.now());
+    const timer = setTimeout(() => {
+      setUnlocked(false);
+      kioskService.load().then(setSettings).catch(() => {});
+    }, Math.min(wait, 2 ** 31 - 1));
+    return () => clearTimeout(timer);
+  }, [sessionEndsAt]);
+
+  useEffect(() => {
+    kioskService.load().then((next) => {
+      setSettings(next);
+      setUnlocked(kioskService.isUnlocked());
+      if (next.active) {
+        // The employee directory needs the device token, so only ask for it once unlocked
+        // (handleLockSubmit fetches it right after a successful PIN).
+        if (kioskService.isUnlocked()) {
+          kioskService.getEmployees()
+            .then(setDirectory)
+            .catch(() => {});
+        }
+      }
+    });
+    return () => {
+      if (resetTimer.current) clearTimeout(resetTimer.current);
+    };
+  }, []);
+
+  // The face models (~7 MB plus the shader warm-up, which blocks the page for a moment) are what the
+  // first scan needs, not the PIN keypad. Load them in the background as soon as kiosk mode is on -
+  // including while the terminal sits locked waiting for the next person - so the first scan of the
+  // day, and the first scan after the midnight relock, start with everything already warm. The delay
+  // keeps the download and warm-up away from the first paint and the keypad.
+  useEffect(() => {
+    if (!enabled) return undefined;
+    const timer = setTimeout(() => {
+      import('../../services/faceMatchService').then((m) => m.preloadFaceModels());
+    }, 6000);
+    return () => clearTimeout(timer);
+  }, [enabled]);
+
+  useEffect(() => {
+    if (phase !== 'locked') return undefined;
+    const first = setTimeout(() => setNow(new Date()), 0);
+    const tick = setInterval(() => setNow(new Date()), 1000);
+    return () => { clearTimeout(first); clearInterval(tick); };
+  }, [phase]);
+
+  useEffect(() => {
+    if (!enabled) return;
+    document.documentElement.requestFullscreen?.().catch(() => {});
+    return () => {
+      if (document.fullscreenElement) document.exitFullscreen?.().catch(() => {});
+    };
+  }, [enabled]);
+
+  const clearFlowState = () => {
+    setQuery('');
+    setCandidate(null);
+    setEmployee(null);
+    setTodayRecord(null);
+    setAction(null);
+    setConflict(null);
+    setRecordedType(null);
+    setRecordedAt(null);
+    setRecordedHours(null);
+    setShiftInfo(null);
+    setNotice(null);
+    setFaceLockUntil(null);
+    setClockInOutcome(null);
+    setClockOutOutcome(null);
+    setEarlyLeaveInfo(null);
+    setEarlyOutReason({ reasonCode: null, reasonNote: '' });
+    setServerCheckPending(false);
+  };
+
+  const resetToMode = () => {
+    if (resetTimer.current) clearTimeout(resetTimer.current);
+    faceTicket.current = null;
+    setPhase('mode');
+    clearFlowState();
+  };
+
+  const scheduleReset = () => {
+    if (resetTimer.current) clearTimeout(resetTimer.current);
+    resetTimer.current = setTimeout(resetToMode, RESET_DELAY_MS);
+  };
+
+  const selectMode = (mode) => {
+    setAction(mode);
+    setConflict(null);
+    setCandidate(null);
+    setQuery('');
+    setPhase('entry');
+    setTimeout(() => searchRef.current?.focus(), 0);
+  };
+
+  // --- Kiosk access PIN gate (once a day: an unlock lasts until midnight) --
+
+  const pressLockKey = (digit) => setLockPin((prev) => (prev.length < 4 ? prev + digit : prev));
+  const lockBackspace = () => setLockPin((prev) => prev.slice(0, -1));
+
+  const handleLockSubmit = async (pin) => {
+    if (lockSubmitting) return;
+    setLockSubmitting(true);
+    setLockError(null);
+    const ok = await kioskService.verifyPin(pin);
+    if (ok) {
+      kioskService.log('security', 'Kiosk terminal unlocked with access PIN');
+      setLockPin('');
+      setLockSubmitting(false);
+      setUnlocked(true);
+      setPhase('mode');
+      // The directory needs the device token, so it can only be fetched once unlocked.
+      kioskService.getEmployees().then(setDirectory).catch(() => {});
+    } else {
+      // (The server records the failed attempt itself - a locked device has no token to log with.)
+      setLockError('Incorrect PIN. Please try again.');
+      setLockPin('');
+      setLockSubmitting(false);
+    }
+  };
+
+  useEffect(() => {
+    if (!enabled || unlocked) return;
+    if (lockPin.length === 4) {
+      const timer = setTimeout(() => handleLockSubmit(lockPin), 150);
+      return () => clearTimeout(timer);
+    }
+    return undefined;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [enabled, unlocked, lockPin]);
+
+  useEffect(() => {
+    if (!enabled || unlocked) return;
+    const handleKey = (e) => {
+      if (/^[0-9]$/.test(e.key)) {
+        pressLockKey(e.key);
+      } else if (e.key === 'Backspace') {
+        lockBackspace();
+      } else if (e.key === 'Enter' && lockPin.length === 4) {
+        handleLockSubmit(lockPin);
+      }
+    };
+    window.addEventListener('keydown', handleKey);
+    return () => window.removeEventListener('keydown', handleKey);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [enabled, unlocked, lockPin]);
+
+  // --- Employee ID entry: exact full-ID match only (no partial search) ----
+  // Employee IDs are a fixed code (EMP + 8 digits). A fragment must never resolve to a person.
+  // This used to accept any employee whose ID *ended with* the digits typed so far, so a single
+  // keystroke like 2 jumped straight to whoever happened to finish their ID with 2 - a real risk at
+  // a kiosk, where the next tap is a clock-in. Accept the whole code, or the whole number part of
+  // it, and nothing shorter. Partial input is only ever used to say how much is still missing.
+  // The local directory is consulted first; if it was never loaded (a one-shot fetch that can fail
+  // silently) the server-side fallbacks below keep ID entry working.
+
+  // Every ID form in the directory, indexed once per directory load instead of on every keystroke.
+  // Typing used to re-split every employee's ID into its forms on each character press - hundreds
+  // of array allocations per key on a full roster, which is exactly the kind of work that makes a
+  // tablet's input feel laggy while a queue waits.
+  const directoryIndex = useMemo(() => {
+    const byForm = new Map();
+    const allForms = [];
+    let minDigitLength = 0;
+
+    for (const employee of directory) {
+      const forms = idForms(employee.id);
+      for (const form of forms) {
+        if (!byForm.has(form)) byForm.set(form, employee);
+        allForms.push(form);
+      }
+      const digits = normalizeId(employee.id).replace(/\D/g, '').length;
+      if (digits > 0 && (minDigitLength === 0 || digits < minDigitLength)) minDigitLength = digits;
+    }
+
+    return { byForm, allForms, minDigitLength: minDigitLength || 8 };
+  }, [directory]);
+
+  const minIdLength = directoryIndex.minDigitLength;
+
+  const entryInfo = useMemo(() => {
+    if (phase !== 'entry') return null;
+    const typed = normalizeId(query);
+    if (!typed) return null;
+    if (directoryIndex.byForm.has(typed)) return { type: 'match' };
+
+    // How much is still missing, counting only complete IDs this could still become. Never used to
+    // choose an employee.
+    let smallestRemaining = Infinity;
+    for (const form of directoryIndex.allForms) {
+      if (form.length > typed.length && form.startsWith(typed)) {
+        const missing = form.length - typed.length;
+        if (missing < smallestRemaining) smallestRemaining = missing;
+      }
+    }
+    if (smallestRemaining !== Infinity) return { type: 'more', remaining: smallestRemaining };
+
+    // Only call it unknown once there is enough typed to be a whole ID that simply is not in the
+    // directory; before that the employee is still mid-code.
+    if (typed.length >= minIdLength) return { type: 'none' };
+    return { type: 'keep' };
+  }, [query, phase, directoryIndex, minIdLength]);
+
+  const exactMatch = useMemo(() => {
+    if (phase !== 'entry') return null;
+    const typed = normalizeId(query);
+    if (!typed) return null;
+    return directoryIndex.byForm.get(typed) || null;
+  }, [query, phase, directoryIndex]);
+
+  // Self-heal: if the one-shot directory fetch failed at mount, retry it the
+  // moment an employee starts typing instead of reporting every ID as unknown.
+  useEffect(() => {
+    if (phase === 'entry' && directory.length === 0) {
+      kioskService.getEmployees()
+        .then(setDirectory)
+        .catch(() => {});
+    }
+  }, [phase, directory.length]);
+
+  // Server-side fallback: when the local directory has no match, ask the backend directly so a
+  // valid full ID still resolves. Gated on the input being at least a whole number long, for the
+  // same reason the local match is: a short fragment must never be sent as if it were a person.
+  useEffect(() => {
+    const typed = normalizeId(query);
+    if (phase !== 'entry' || typed.length < minIdLength) return;
+    if (directoryIndex.byForm.has(typed)) return;
+
+    let cancelled = false;
+    const timer = setTimeout(async () => {
+      setServerCheckPending(true);
+      try {
+        const found = await kioskService.getEmployee(typed);
+        if (!cancelled && found) {
+          setCandidate(found);
+          setPhase('confirm');
+        }
+      } catch {
+        // 404 - leave the "No employee found" message visible
+      } finally {
+        if (!cancelled) setServerCheckPending(false);
+      }
+    }, 400);
+
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+      setServerCheckPending(false);
+    };
+  }, [query, phase, directoryIndex, minIdLength]);
+
+  if (exactMatch && !candidate) {
+    setCandidate(exactMatch);
+    setPhase('confirm');
+  }
+
+  if (phase === 'locked' && faceLockUntil && now.getTime() >= faceLockUntil) {
+    setPhase('mode');
+    clearFlowState();
+  }
+
+  const handleConfirmEmployee = async () => {
+    if (!candidate || !action) return;
+    setEmployee(candidate);
+    setQuery('');
+
+    // Both lookups are independent and each one costs a full server round-trip, so they run
+    // together instead of one after the other - this is the gap between "employee confirmed" and
+    // the camera opening, and at a busy entrance it is dead time for the whole queue.
+    const todayKey = toDateKey(nowInTimezone(timezone));
+    const [records, shift] = await Promise.all([
+      kioskService.getAttendanceByEmployee(candidate.id, todayKey).catch(() => []),
+      kioskService.getTodaySchedule(candidate.id).catch(() => null),
+    ]);
+
+    const today = (records || []).find((r) => r.date === todayKey) || null;
+    setTodayRecord(today);
+    setShiftInfo(shift || null);
+
+    // Approved leave = no attendance at all. The backend enforces this too,
+    // but catching it here means the camera never even opens.
+    if (shift?.onApprovedLeave) {
+      const fmtDay = (key) => {
+        if (!key) return '';
+        const [y, m, d] = key.split('-').map(Number);
+        return new Date(y, m - 1, d).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+      };
+      const range = shift.approvedLeaveEnd && shift.approvedLeaveEnd !== shift.approvedLeaveStart
+        ? `${fmtDay(shift.approvedLeaveStart)} to ${fmtDay(shift.approvedLeaveEnd)}, ${new Date(shift.approvedLeaveEnd).getFullYear()}`
+        : fmtDay(shift.approvedLeaveStart);
+      setNotice({
+        tone: 'danger',
+        title: 'On Approved Leave',
+        message: `${candidate.firstName} ${candidate.lastName} is on approved ${shift.approvedLeaveType || ''} leave (${range}). Clocking in or out during an approved leave period is not allowed. Please see HR if this is a mistake.`,
+        confirmLabel: 'Back to Home',
+        onConfirm: resetToMode,
+      });
+      setPhase('notice');
+      return;
+    }
+
+    if (today && today.clockIn && today.clockOut) {
+      setConflict(null);
+      setPhase('completed');
+      scheduleReset();
+      return;
+    }
+
+    if (action === 'clock-in' && today && today.clockIn) {
+      setConflict({
+        type: 'already-clocked-in',
+        suggested: 'clock-out',
+        title: 'Already Clocked In Today',
+        message: `${candidate.firstName} already clocked in at ${formatTime(today.clockIn)}. A second clock-in is blocked - attendance can only be recorded once per day. If they are leaving work now, continue to Clock Out instead.`,
+      });
+      setPhase('conflict');
+      return;
+    }
+
+    if (action === 'clock-out' && (!today || !today.clockIn)) {
+      setConflict({
+        type: 'no-clock-in',
+        suggested: 'clock-in',
+        title: 'No Clock-In Found',
+        message: `No clock-in was found for ${candidate.firstName} today. Clock-out requires a matching clock-in record first. Did they mean to Clock In?`,
+      });
+      setPhase('conflict');
+      return;
+    }
+
+    setConflict(null);
+    setPhase('verify');
+  };
+
+  const handleFaceComplete = (verified) => {
+    faceStrikes.current = 0;
+    faceTicket.current = verified?.faceTicket || null;
+    if (action === 'clock-in') {
+      evaluateClockIn();
+    } else {
+      evaluateClockOut();
+    }
+  };
+
+  const handleFaceClose = () => {
+    setPhase('entry');
+    setQuery('');
+    setCandidate(null);
+    setTimeout(() => searchRef.current?.focus(), 0);
+  };
+
+  // A face that did not match the confirmed employee - warn them to stop,
+  // log it as a security event, and lock the terminal after repeat offenses.
+  const handleFaceMismatch = async (verification) => {
+    if (!employee) return;
+
+    // The server owns the strike count (it survives a reload of this page), so its verdict wins.
+    // Counting again here only drives the wording of the warning.
+    if (verification?.code === 'face-locked') {
+      setFaceLockUntil(Date.now() + (verification.retryAfter || FACE_COOLDOWN_MS / 1000) * 1000);
+      faceStrikes.current = 0;
+      setPhase('locked');
+      return;
+    }
+
+    faceStrikes.current += 1;
+    // (The server records the mismatch itself, so a modified terminal cannot hide it.)
+
+    if (faceStrikes.current >= FACE_MAX_STRIKES) {
+      faceStrikes.current = 0;
+      setFaceLockUntil(Date.now() + FACE_COOLDOWN_MS);
+      setPhase('locked');
+      return;
+    }
+
+    const left = verification?.attemptsRemaining;
+    const warning = typeof left === 'number'
+      ? ` ${left} attempt${left === 1 ? '' : 's'} left before the reader pauses for a minute.`
+      : '';
+
+    setNotice({
+      tone: 'danger',
+      title: 'Identity Verification Failed',
+      message: `The face in the camera does not match ${employee.firstName} ${employee.lastName}'s registered photo. Clocking in under another person's ID is a security violation. This attempt has been logged and the HR Admin has been alerted.${warning} Please step aside and see HR if you believe this is a mistake.`,
+      confirmLabel: 'I Understand',
+      cancelLabel: 'Cancel',
+      onConfirm: resetToMode,
+      onCancel: resetToMode,
+    });
+    setPhase('notice');
+  };
+
+  // --- Clock in / out -----------------------------------------------------
+
+  // Runs the shift-aware pre-checks for a clock-in, in this order:
+  //   1. no shift today            -> blocked (nothing to be on time for)
+  //   2. shift already over        -> blocked
+  //   3. later than 15 min past start -> "You Are Late" - can Clock In Anyway
+  //   4. before the shift starts   -> "Clocking In Early" - can Clock In Anyway
+  //   5. otherwise                 -> recorded as Present, no popup
+  // The server enforces 1-3 as well, so this is the friendly explanation of
+  // rules the backend would refuse anyway - never the only guard.
+  const evaluateClockIn = () => {
+    if (!employee) return;
+
+    // The schedule could not be loaded: don't guess a shift (a default start
+    // time is exactly what once called someone "late" on their day off).
+    if (!shiftInfo) {
+      setNotice({
+        tone: 'warning',
+        title: 'Schedule Unavailable',
+        message: `The terminal could not check ${employee.firstName} ${employee.lastName}'s shift for today. Nothing was recorded. Please try again in a moment or contact HR.`,
+        confirmLabel: 'Back to Home',
+        onConfirm: resetToMode,
+      });
+      setPhase('notice');
+      return;
+    }
+
+    if (!shiftInfo.hasShift || !shiftInfo.startTime) {
+      setNotice({
+        tone: 'danger',
+        title: 'No Shift Scheduled Today',
+        message: `There is no shift scheduled for ${employee.firstName} ${employee.lastName} today. Clocking in without a schedule is not allowed. Please check your schedule with HR.`,
+        confirmLabel: 'Back to Home',
+        onConfirm: resetToMode,
+      });
+      setPhase('notice');
+      return;
+    }
+
+    const time = toTimeString(nowInTimezone(timezone));
+    const start = shiftInfo.startTime;
+    const startMin = minutesFromTime(start);
+    const nowMin = minutesFromTime(time);
+    const grace = ATTENDANCE_CONFIG.gracePeriodMinutes;
+
+    const end = shiftInfo.endTime || null;
+    const otMin = Math.round(Number(shiftInfo.approvedOvertimeHours || 0) * 60);
+    const endMin = end ? minutesFromTime(end) + otMin : null;
+
+    if (endMin !== null && endMin > startMin && nowMin >= endMin) {
+      setNotice({
+        tone: 'danger',
+        title: 'Shift Over',
+        message: `${employee.firstName} ${employee.lastName}'s shift ended at ${formatTime(end)} today. Clocking in for a finished shift is not allowed - please contact HR.`,
+        confirmLabel: 'Back to Home',
+        onConfirm: resetToMode,
+      });
+      setPhase('notice');
+      return;
+    }
+
+    if (nowMin > startMin + grace) {
+      const minutesLate = nowMin - startMin;
+      setNotice({
+        tone: 'warning',
+        title: 'You Are Late - Not Clocked In Yet',
+        message: `Face verified. Nothing has been recorded yet. Your shift started at ${formatTime(start)}, and it is now ${minutesLate} ${minutesLate === 1 ? 'minute' : 'minutes'} after your start time (beyond the ${grace}-minute grace period). If you continue, your clock-in will be recorded as Late and reported to HR.`,
+        confirmLabel: 'Clock In as Late',
+        cancelLabel: "Cancel - Don't Clock In",
+        onConfirm: () => { setNotice(null); recordAttendance('late'); },
+        onCancel: resetToMode,
+      });
+      setPhase('notice');
+      return;
+    }
+
+    if (nowMin < startMin) {
+      const minutesEarly = startMin - nowMin;
+      const windowMin = Number(shiftInfo.earlyWindowMinutes ?? 30);
+      if (minutesEarly > windowMin) {
+        const opens = `${String(Math.floor((startMin - windowMin) / 60)).padStart(2, '0')}:${String((startMin - windowMin) % 60).padStart(2, '0')}`;
+        setNotice({
+          tone: 'warning',
+          title: 'Too Early To Clock In',
+          message: `Your shift starts at ${formatTime(start)}. You can clock in from ${formatTime(opens)} (up to ${windowMin} minutes before your shift). Please come back then.`,
+          confirmLabel: 'Back to Home',
+          onConfirm: resetToMode,
+        });
+        setPhase('notice');
+        return;
+      }
+      setNotice({
+        tone: 'info',
+        title: 'Early - Not Clocked In Yet',
+        message: `Face verified. Nothing has been recorded yet. Your shift starts at ${formatTime(start)} and you are ${minutesEarly} ${minutesEarly === 1 ? 'minute' : 'minutes'} early. If you continue, your arrival time is recorded, but paid hours count from ${formatTime(start)}.`,
+        confirmLabel: 'Clock In Early',
+        cancelLabel: "Cancel - Don't Clock In",
+        onConfirm: () => { setNotice(null); recordAttendance('early'); },
+        onCancel: resetToMode,
+      });
+      setPhase('notice');
+      return;
+    }
+
+    recordAttendance();
+  };
+
+  // Runs the shift-aware pre-check for a clock-out. Leaving before the shift
+  // end is never refused (an employee who is sick or has an emergency must not
+  // be trapped at the terminal), but the employee must STATE A REASON first:
+  // the terminal opens the early clock-out reason picker and Continue stays
+  // disabled until one is chosen. Clocking out at/after the end just succeeds.
+  const evaluateClockOut = () => {
+    if (!employee || !todayRecord) return;
+
+    if (!shiftInfo || !shiftInfo.hasShift || !shiftInfo.endTime) {
+      recordAttendance();
+      return;
+    }
+
+    const startMin = minutesFromTime(shiftInfo.startTime || ATTENDANCE_CONFIG.startTime);
+    const otHours = Number(shiftInfo.approvedOvertimeHours || 0);
+    const endMin = minutesFromTime(shiftInfo.endTime) + Math.round(otHours * 60);
+
+    const target = nowInTimezone(timezone);
+    target.setHours(Math.floor(endMin / 60), endMin % 60, 0, 0);
+    if (endMin <= startMin) target.setDate(target.getDate() + 1);
+
+    if (nowInTimezone(timezone).getTime() < target.getTime()) {
+      setEarlyOutReason({ reasonCode: null, reasonNote: '' });
+      setPhase('early-reason');
+      return;
+    }
+
+    // Past the (approved) end of the shift by more than the grace period: the extra
+    // time is NOT counted unless overtime was approved (the server caps the day at the approved end). Tell the
+    // employee now, so nobody stays on believing the extra hours count. The punch
+    // itself is never refused - people are never trapped at the door.
+    const nowMin = minutesFromTime(toTimeString(nowInTimezone(timezone)));
+    const extraMin = nowMin - endMin;
+    if (endMin > startMin && extraMin > ATTENDANCE_CONFIG.gracePeriodMinutes) {
+      const h = Math.floor(extraMin / 60);
+      const m = extraMin % 60;
+      const amount = `${h > 0 ? `${h}h ` : ''}${m}m`;
+      setNotice({
+        tone: 'warning',
+        title: 'Overtime Not Approved - Not Clocked Out Yet',
+        message: otHours > 0
+          ? `Face verified. Nothing has been recorded yet. You are clocking out ${amount} after your approved overtime ended (${formatTime(`${pad(Math.floor(endMin / 60) % 24)}:${pad(endMin % 60)}`)}). That extra time will NOT be counted - your day will end at the approved time. To have overtime counted, send an overtime request from My Attendance.`
+          : `Face verified. Nothing has been recorded yet. Your shift ended at ${formatTime(shiftInfo.endTime)} and you have no approved overtime. You are clocking out ${amount} later. That extra time will NOT be counted - your day will end at ${formatTime(shiftInfo.endTime)}. To have overtime counted, send an overtime request from My Attendance.`,
+        confirmLabel: 'Clock Out',
+        cancelLabel: "Cancel - Don't Clock Out",
+        onConfirm: () => { setNotice(null); recordAttendance(); },
+        onCancel: resetToMode,
+      });
+      setPhase('notice');
+      return;
+    }
+
+    recordAttendance();
+  };
+
+  const recordAttendance = async (outcome = null) => {
+    if (!employee || !action) return;
+    setPhase('recording');
+    try {
+      const time = toTimeString(nowInTimezone(timezone));
+
+      if (action === 'clock-in') {
+        const start = shiftInfo?.hasShift && shiftInfo.startTime
+          ? shiftInfo.startTime
+          : ATTENDANCE_CONFIG.startTime;
+        const created = await kioskService.clockIn({
+          employeeId: employee.id,
+          date: toDateKey(nowInTimezone(timezone)),
+          clockIn: time,
+          status: calculateAttendanceStatus(time, { ...ATTENDANCE_CONFIG, startTime: start }),
+          location: ATTENDANCE_CONFIG.location,
+          faceTicket: faceTicket.current,
+        });
+        setTodayRecord(created);
+        setRecordedHours(null);
+        setClockInOutcome(outcome);
+      } else {
+        const reason = earlyOutReason.reasonCode ? {
+          reasonCode: earlyOutReason.reasonCode,
+          reasonNote: (earlyOutReason.reasonNote || '').trim() || null,
+        } : {};
+        const punched = await kioskService.clockOut(todayRecord.id, {
+          clockOut: time,
+          ...reason,
+          faceTicket: faceTicket.current,
+        });
+        // The server works out which hours count (lunch, shift end, approved overtime); show its answer.
+        setRecordedHours(punched?.data?.totalHours ?? null);
+        setClockInOutcome(null);
+        setClockOutOutcome(earlyOutReason.reasonCode ? 'early' : null);
+        setEarlyLeaveInfo(punched?.earlyLeave || null);
+      }
+
+      kioskService.log(
+        action === 'clock-in' ? 'clock-in' : 'clock-out',
+        `${employee.firstName} ${employee.lastName} clocked ${action === 'clock-in' ? 'in' : 'out'}`,
+        { employeeId: employee.id, detail: 'Method: Facial recognition' }
+      );
+
+      faceTicket.current = null;
+      setRecordedType(action);
+      setRecordedAt(time);
+      setPhase('success');
+      scheduleReset();
+    } catch (error) {
+      // A 4xx carries the server's own rule ("no shift today", "shift over", "on
+      // approved leave", "state a reason first"...): show that, and don't offer a
+      // retry that can only fail the same way.
+      const status = error?.response?.status;
+      const serverMessage = error?.response?.data?.message;
+      if (status >= 400 && status < 500 && status !== 401 && serverMessage) {
+        setNotice({
+          tone: 'danger',
+          title: action === 'clock-in' ? 'Clock-In Not Allowed' : 'Clock-Out Not Allowed',
+          message: serverMessage,
+          confirmLabel: 'Back to Home',
+          onConfirm: resetToMode,
+        });
+        setPhase('notice');
+        return;
+      }
+      setNotice({
+        tone: 'danger',
+        title: 'Attendance Not Recorded',
+        message: 'Something went wrong while recording your attendance. Nothing was saved. Please try again.',
+        confirmLabel: 'Try Again',
+        cancelLabel: 'Cancel',
+        onConfirm: () => { setNotice(null); setPhase('verify'); },
+        onCancel: resetToMode,
+      });
+      setPhase('notice');
+    }
+  };
+
+  // --- Admin exit via 5-tap -----------------------------------------------
+
+  const handleSurfaceTap = (e) => {
+    if (!enabled || !unlocked) return;
+    if (e.target.closest('button, input, a, select, textarea')) return;
+    const nowTs = Date.now();
+    taps.current = [...taps.current, nowTs].filter((ts) => nowTs - ts <= TAP_WINDOW_MS);
+    if (taps.current.length >= TAP_COUNT) {
+      taps.current = [];
+      setUnlockError(null);
+      setShowUnlock(true);
+    }
+  };
+
+  const handleUnlockSubmit = async (pin) => {
+    if (unlockSubmitting) return;
+    setUnlockSubmitting(true);
+    setUnlockError(null);
+    const ok = await kioskService.verifyPin(pin);
+    if (ok) {
+      kioskService.log('security', 'Kiosk unlocked by Administrator');
+      setUnlockSubmitting(false);
+      setShowUnlock(false);
+      toast.success('Unlocked', 'Returning to the Kiosk Management Dashboard.');
+      navigate('/kiosk-setup');
+    } else {
+      setUnlockError('Incorrect PIN. Please try again.');
+      setUnlockSubmitting(false);
+    }
+  };
+
+  const lockSecondsLeft = faceLockUntil ? Math.max(0, Math.ceil((faceLockUntil - now.getTime()) / 1000)) : 0;
+
+  // What the success screen shows depends on how the clock-in went: on-time
+  // (within the grace period) is a clean success; late/early/unscheduled
+  // arrivals carry a matching notice so HR policy is visible on the device.
+  const successView = useMemo(() => {
+    if (!employee || recordedType !== 'clock-in') {
+      if (clockOutOutcome === 'early') {
+        // Say what this early clock-out COSTS, so the reason is never a free pass.
+        const info = earlyLeaveInfo;
+        const lines = ['Your reason was attached and HR has been notified.'];
+        if (info?.autoUnpaid) {
+          lines.push(`This was early clock-out #${info.position} within ${info.windowDays} days (free allowance: ${info.allowed}), so it is recorded as UNEXCUSED.`);
+        } else if (info) {
+          lines.push(`Early clock-out #${info.position} in the last ${info.windowDays} days (${info.allowed} are free).`);
+        }
+        if (info?.proofRequired) {
+          lines.push(`A medical certificate is required within ${info.certificateHours} hours - upload it in My Attendance, or this will not be excused.`);
+        }
+        return {
+          tone: 'amber',
+          title: 'Clocked Out Early',
+          message: `Thank you, ${employee?.firstName}. Your early clock-out has been recorded.`,
+          noteTitle: info?.autoUnpaid ? 'Recorded As Unexcused' : 'Early Leave Recorded',
+          note: lines.join(' '),
+        };
+      }
+      return {
+        tone: 'emerald',
+        title: 'Clocked Out',
+        message: `Thank you, ${employee?.firstName}! Have a great day.`,
+        noteTitle: null,
+        note: null,
+      };
+    }
+    switch (clockInOutcome) {
+      case 'late':
+        return {
+          tone: 'amber',
+          title: 'Clocked In (Late)',
+          message: `Thank you, ${employee.firstName}. Your clock-in has been recorded as late.`,
+          noteTitle: 'Late Arrival',
+          note: `Your shift started at ${formatTime(shiftInfo?.startTime || ATTENDANCE_CONFIG.startTime)}. You clocked in after the 15-minute grace period.`,
+        };
+      case 'early':
+        return {
+          tone: 'blue',
+          title: 'Clocked In (Early)',
+          message: `Thank you, ${employee.firstName}. You clocked in before your shift start.`,
+          noteTitle: 'Early Clock-In',
+          note: `Your shift starts at ${formatTime(shiftInfo?.startTime || ATTENDANCE_CONFIG.startTime)}.`,
+        };
+      default:
+        return {
+          tone: 'emerald',
+          title: 'Clocked In Successfully',
+          message: `Thank you, ${employee.firstName}! Have a great day.`,
+          noteTitle: 'On Time',
+          note: 'You clocked in on time, within the 15-minute grace period.',
+        };
+    }
+  }, [employee, recordedType, clockInOutcome, clockOutOutcome, earlyLeaveInfo, shiftInfo]);
+
+  // --- Disabled screen: kiosk mode has not been enabled by the HR Admin --
+  if (!enabled) {
+    return (
+      <div className="min-h-screen bg-gradient-to-br from-[#0B1F3A] via-[#0E2747] to-[#0B1F3A] flex flex-col">
+        <BrandHeader subtitle="Attendance Terminal · Disabled" />
+        <main className="flex-1 flex items-center justify-center px-4 py-10">
+          <div className="w-full max-w-md bg-white rounded-3xl shadow-2xl p-8 sm:p-10 text-center">
+            <div className="w-16 h-16 mx-auto rounded-2xl bg-amber-50 flex items-center justify-center">
+              <AlertTriangle className="w-8 h-8 text-amber-500" />
+            </div>
+            <h2 className="text-2xl font-bold text-gray-900 mt-4">Clock-In Disabled</h2>
+            <p className="text-gray-500 mt-1.5">
+              Clock-in attendance is disabled. Kiosk mode turns off every midnight; wait for the administrator to enable it for today.
+            </p>
+            <Button
+              size="lg"
+              className="mt-8 w-full"
+              icon={RefreshCw}
+              onClick={() => kioskService.load().then(setSettings)}
+            >
+              Check Again
+            </Button>
+          </div>
+        </main>
+      </div>
+    );
+  }
+
+  // --- Dead end: kiosk mode is on but no PIN has been set -----------------
+  // The server cannot issue a device token without a PIN, so a keypad here would be
+  // a screen nobody can get past. Say who to contact instead.
+  if (settings.hasPin === false) {
+    return (
+      <div className="min-h-screen bg-gradient-to-br from-[#0B1F3A] via-[#0E2747] to-[#0B1F3A] flex flex-col">
+        <BrandHeader subtitle={`Attendance Terminal · ${settings.deviceName}`} />
+        <main className="flex-1 flex items-center justify-center px-4 py-10">
+          <div className="w-full max-w-md bg-white rounded-3xl shadow-2xl p-8 sm:p-10 text-center">
+            <div className="w-16 h-16 mx-auto rounded-2xl bg-amber-50 flex items-center justify-center">
+              <AlertTriangle className="w-8 h-8 text-amber-500" />
+            </div>
+            <h2 className="text-2xl font-bold text-gray-900 mt-4">Awaiting Setup</h2>
+            <p className="text-gray-500 mt-1.5">
+              Kiosk mode is on, but no access PIN has been created yet. Please ask the HR Admin to create one
+              in Kiosk Management before using this terminal.
+            </p>
+            <Button
+              size="lg"
+              className="mt-8 w-full"
+              icon={RefreshCw}
+              onClick={() => kioskService.load().then(setSettings)}
+            >
+              Check Again
+            </Button>
+          </div>
+        </main>
+      </div>
+    );
+  }
+
+  // --- Lock screen: the kiosk access PIN is required once a day ------------
+  if (!unlocked) {
+    return (
+      <div className="min-h-screen bg-gradient-to-br from-[#0B1F3A] via-[#0E2747] to-[#0B1F3A] flex flex-col">
+        <BrandHeader subtitle={`Attendance Terminal · ${settings.deviceName}`} />
+
+        <LiveClock timezone={timezone} />
+
+        <main className="flex-1 flex items-center justify-center px-4 py-10">
+          <div className="w-full max-w-sm">
+            <div className="bg-white rounded-3xl shadow-2xl p-8 text-center">
+              <div className="w-14 h-14 mx-auto rounded-2xl bg-blue-50 flex items-center justify-center">
+                <Lock className="w-7 h-7 text-blue-600" />
+              </div>
+              <h2 className="text-xl font-bold text-gray-900 mt-4">Kiosk Unlock</h2>
+              <p className="text-xs text-gray-500 mt-1">
+                Enter the PIN to start today's session. It stays unlocked until midnight.
+              </p>
+
+              <div className="flex justify-center gap-3 mt-6">
+                {[0, 1, 2, 3].map((i) => (
+                  <div
+                    key={i}
+                    className={clsx(
+                      'w-4 h-4 rounded-full border-2 transition-all duration-150',
+                      lockPin.length > i ? 'bg-blue-600 border-blue-600 scale-110' : 'border-gray-300'
+                    )}
+                  />
+                ))}
+              </div>
+
+              {lockError && (
+                <p className="text-xs font-medium text-red-600 bg-red-50 rounded-xl px-3 py-2 mt-4 animate-fadeIn">
+                  {lockError}
+                </p>
+              )}
+
+              <div className="grid grid-cols-3 gap-2.5 mt-6 select-none">
+                {LOCK_KEYS.map((key, idx) => {
+                  if (key === '') return <div key={idx} />;
+                  if (key === 'back') {
+                    return (
+                      <button
+                        key={idx}
+                        type="button"
+                        disabled={lockSubmitting}
+                        onClick={lockBackspace}
+                        className="h-14 rounded-2xl bg-gray-50 hover:bg-gray-100 active:bg-gray-200 transition-colors flex items-center justify-center text-gray-500"
+                      >
+                        <Delete className="w-5 h-5" />
+                      </button>
+                    );
+                  }
+                  return (
+                    <button
+                      key={idx}
+                      type="button"
+                      disabled={lockSubmitting}
+                      onClick={() => pressLockKey(key)}
+                      className="h-14 rounded-2xl bg-gray-100 hover:bg-gray-200 active:bg-blue-600 active:text-white transition-all text-lg font-semibold text-gray-900"
+                    >
+                      {key}
+                    </button>
+                  );
+                })}
+              </div>
+
+              <p className="text-[11px] text-gray-400 mt-5">
+                {settings.location} · {settings.deviceName}
+              </p>
+            </div>
+          </div>
+        </main>
+      </div>
+    );
+  }
+
+  // --- Clock-in terminal --------------------------------------------------
+  return (
+    <div
+      onPointerDown={handleSurfaceTap}
+      className="min-h-screen bg-gradient-to-br from-[#0B1F3A] via-[#0E2747] to-[#0B1F3A] flex flex-col"
+    >
+      <header className="flex items-center justify-between px-6 lg:px-10 py-5">
+        <div className="flex items-center gap-3">
+          <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-blue-500 to-blue-600 flex items-center justify-center shadow-lg shadow-blue-500/20">
+            <Briefcase className="w-5 h-5 text-white" />
+          </div>
+          <div>
+            <h1 className="text-white font-bold text-[15px] leading-tight tracking-tight">Workforce Management</h1>
+            <p className="text-blue-300/60 text-[11px] font-medium">Attendance Terminal · {settings.deviceName}</p>
+          </div>
+        </div>
+        <span className="inline-flex items-center gap-1.5 text-sm font-medium text-amber-300/80">
+          <Hand className="w-4 h-4" />
+          Admin: tap 5 times to unlock
+        </span>
+      </header>
+
+      <LiveClock timezone={timezone} />
+
+      <main className="flex-1 flex items-start sm:items-center justify-center px-4 py-10">
+        <div className="w-full max-w-2xl">
+          {phase === 'mode' && (
+            <div className="bg-white rounded-3xl shadow-2xl p-8 sm:p-10 animate-scaleIn">
+              <div className="text-center">
+                <div className="w-16 h-16 mx-auto rounded-2xl bg-blue-50 flex items-center justify-center">
+                  <ScanFace className="w-8 h-8 text-blue-600" />
+                </div>
+                <h2 className="text-2xl font-bold text-gray-900 mt-4">Welcome to the Attendance Terminal</h2>
+                <p className="text-gray-500 mt-1.5">Choose an action to continue</p>
+              </div>
+
+              <div className="mt-8 grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <button
+                  type="button"
+                  onClick={() => selectMode('clock-in')}
+                  className="group rounded-2xl border-2 border-emerald-200 bg-gradient-to-b from-emerald-50 to-emerald-50/30 p-6 sm:p-8 text-left transition-all hover:border-emerald-400 hover:shadow-xl hover:shadow-emerald-500/10 active:scale-[0.98]"
+                >
+                  <div className="w-14 h-14 rounded-2xl bg-emerald-500 flex items-center justify-center shadow-lg shadow-emerald-500/30 transition-transform group-hover:scale-105">
+                    <LogIn className="w-7 h-7 text-white" />
+                  </div>
+                  <p className="text-xl font-bold text-gray-900 mt-5">Clock In</p>
+                  <p className="text-sm text-gray-500 mt-1">Starting your shift</p>
+                  <p className="mt-4 inline-flex items-center gap-1 text-xs font-semibold text-emerald-600">
+                    Tap to begin <span aria-hidden>→</span>
+                  </p>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => selectMode('clock-out')}
+                  className="group rounded-2xl border-2 border-amber-200 bg-gradient-to-b from-amber-50 to-amber-50/30 p-6 sm:p-8 text-left transition-all hover:border-amber-400 hover:shadow-xl hover:shadow-amber-500/10 active:scale-[0.98]"
+                >
+                  <div className="w-14 h-14 rounded-2xl bg-amber-500 flex items-center justify-center shadow-lg shadow-amber-500/30 transition-transform group-hover:scale-105">
+                    <LogOut className="w-7 h-7 text-white" />
+                  </div>
+                  <p className="text-xl font-bold text-gray-900 mt-5">Clock Out</p>
+                  <p className="text-sm text-gray-500 mt-1">Ending your shift</p>
+                  <p className="mt-4 inline-flex items-center gap-1 text-xs font-semibold text-amber-600">
+                    Tap to begin <span aria-hidden>→</span>
+                  </p>
+                </button>
+              </div>
+
+              <p className="mt-6 text-center text-xs text-gray-400 flex items-center justify-center gap-1.5">
+                <ShieldCheck className="w-3.5 h-3.5" />
+                Unlocked until {sessionEndLabel} · Employees verified with facial recognition
+              </p>
+            </div>
+          )}
+
+          {phase === 'entry' && (
+            <div className="bg-white rounded-3xl shadow-2xl p-8 sm:p-10 animate-scaleIn">
+              <div className="flex items-start justify-between gap-4">
+                <div className="flex items-center gap-4 min-w-0">
+                  <div className="w-14 h-14 rounded-2xl bg-blue-50 flex items-center justify-center shrink-0">
+                    <Search className="w-7 h-7 text-blue-600" />
+                  </div>
+                  <div className="min-w-0">
+                    <h2 className="text-xl font-bold text-gray-900">
+                      {action === 'clock-in' ? 'Clocking In' : 'Clocking Out'}
+                    </h2>
+                    <p className="text-gray-500 mt-1">Enter your full Employee ID</p>
+                  </div>
+                </div>
+                <div className="flex flex-col items-end gap-2 shrink-0">
+                  <Badge variant={action === 'clock-out' ? 'danger' : 'primary'} size="md">
+                    <span className="flex items-center gap-1.5">
+                      {action === 'clock-in' ? <LogIn className="w-3.5 h-3.5" /> : <LogOut className="w-3.5 h-3.5" />}
+                      {action === 'clock-in' ? 'Clock In' : 'Clock Out'}
+                    </span>
+                  </Badge>
+                  <button
+                    type="button"
+                    onClick={resetToMode}
+                    className="inline-flex items-center gap-1 text-xs font-medium text-gray-400 hover:text-blue-600 transition-colors underline"
+                  >
+                    <ArrowLeft className="w-3 h-3" />
+                    Change action
+                  </button>
+                </div>
+              </div>
+
+              <div className="mt-8">
+                <div className="relative">
+                  <input
+                    ref={searchRef}
+                    type="text"
+                    autoFocus
+                    value={query}
+                    onChange={(e) => setQuery(e.target.value)}
+                    placeholder="e.g. EMP20264845"
+                    className="w-full h-16 pl-5 pr-5 text-center text-xl font-semibold tracking-[0.08em] uppercase rounded-2xl border-2 border-gray-200 focus:border-blue-500 focus:ring-2 focus:ring-blue-200 outline-none text-gray-900 placeholder:text-gray-300 placeholder:tracking-normal"
+                  />
+                </div>
+
+                {entryInfo && (
+                  <div className="mt-3 text-center">
+                    {entryInfo.type === 'more' && (
+                      <p className="text-sm font-medium text-blue-600">
+                        Continue typing — {entryInfo.remaining} more {entryInfo.remaining === 1 ? 'character' : 'characters'}
+                      </p>
+                    )}
+                    {entryInfo.type === 'keep' && (
+                      <p className="text-sm text-gray-500">Keep typing…</p>
+                    )}
+                    {entryInfo.type === 'none' && (
+                      serverCheckPending ? (
+                        <p className="text-sm font-medium text-blue-600">Checking employee records…</p>
+                      ) : (
+                        <p className="text-sm font-medium text-red-600">
+                          No employee found with this ID. Check the spelling and try again.
+                        </p>
+                      )
+                    )}
+                    {entryInfo.type === 'match' && (
+                      <p className="text-sm font-medium text-emerald-600">Employee found — verifying…</p>
+                    )}
+                  </div>
+                )}
+              </div>
+
+              <p className="mt-6 text-center text-xs text-gray-400">
+                Enter the FULL Employee ID. Matches are confirmed and verified with facial recognition.
+              </p>
+            </div>
+          )}
+
+          {phase === 'confirm' && candidate && (
+            <div className="bg-white rounded-3xl shadow-2xl p-8 sm:p-10 text-center animate-scaleIn">
+              <div className="w-14 h-14 mx-auto rounded-2xl bg-blue-50 flex items-center justify-center">
+                <UserCheck className="w-7 h-7 text-blue-600" />
+              </div>
+              <h2 className="text-2xl font-bold text-gray-900 mt-4">Is this you?</h2>
+              <p className="text-sm text-gray-500 mt-1.5">
+                Confirm before {action === 'clock-in' ? 'clocking in' : 'clocking out'}.
+              </p>
+
+              <div className="mt-8 rounded-2xl border border-gray-100 bg-gray-50/60 p-6 text-left">
+                <div className="flex items-center gap-4 min-w-0">
+                  <Avatar src={candidate.avatar} firstName={candidate.firstName} lastName={candidate.lastName} size="lg" />
+                  <div className="min-w-0">
+                    <p className="text-xs font-semibold uppercase tracking-wider text-gray-400">{candidate.id}</p>
+                    <p className="text-lg font-bold text-gray-900 truncate">{candidate.firstName} {candidate.lastName}</p>
+                    <p className="text-sm text-gray-500 truncate">{candidate.position} · {candidate.department}</p>
+                  </div>
+                </div>
+              </div>
+
+              <div className="mt-8 flex flex-col sm:flex-row gap-3">
+                <Button
+                  variant="primary"
+                  size="lg"
+                  className="flex-1"
+                  icon={UserCheck}
+                  onClick={handleConfirmEmployee}
+                >
+                  Yes, that's me
+                </Button>
+                <Button
+                  variant="outline"
+                  size="lg"
+                  className="flex-1"
+                  onClick={() => {
+                    setCandidate(null);
+                    setQuery('');
+                    setPhase('entry');
+                    setTimeout(() => searchRef.current?.focus(), 0);
+                  }}
+                >
+                  No, start over
+                </Button>
+              </div>
+            </div>
+          )}
+
+          {phase === 'conflict' && employee && conflict && (
+            <div className="bg-white rounded-3xl shadow-2xl p-8 sm:p-10 text-center animate-scaleIn">
+              <div className="w-16 h-16 mx-auto rounded-full bg-amber-50 flex items-center justify-center">
+                <AlertTriangle className="w-8 h-8 text-amber-500" />
+              </div>
+              <h2 className="text-2xl font-bold text-gray-900 mt-4">{conflict.title}</h2>
+              <p className="text-gray-500 mt-1.5 max-w-md mx-auto">{conflict.message}</p>
+
+              <div className="mt-8 rounded-2xl border border-gray-100 bg-gray-50/60 p-6 text-left">
+                <div className="flex items-center gap-4 min-w-0">
+                  <Avatar src={employee.avatar} firstName={employee.firstName} lastName={employee.lastName} size="lg" />
+                  <div className="min-w-0">
+                    <p className="text-xs font-semibold uppercase tracking-wider text-gray-400">{employee.id}</p>
+                    <p className="text-lg font-bold text-gray-900 truncate">{employee.firstName} {employee.lastName}</p>
+                    <p className="text-sm text-gray-500 truncate">{employee.position} · {employee.department}</p>
+                  </div>
+                </div>
+              </div>
+
+              <div className="mt-8 flex flex-col sm:flex-row gap-3">
+                <Button
+                  variant={conflict.suggested === 'clock-out' ? 'danger' : 'primary'}
+                  size="lg"
+                  className="flex-1"
+                  icon={conflict.suggested === 'clock-out' ? LogOut : LogIn}
+                  onClick={() => {
+                    setAction(conflict.suggested);
+                    setConflict(null);
+                    setPhase('verify');
+                  }}
+                >
+                  Yes, {conflict.suggested === 'clock-in' ? 'Clock In' : 'Clock Out'}
+                </Button>
+                <Button variant="outline" size="lg" className="flex-1" onClick={resetToMode}>
+                  No, Start Over
+                </Button>
+              </div>
+            </div>
+          )}
+
+          {phase === 'notice' && notice && (() => {
+            const tone = NOTICE_TONES[notice.tone] || NOTICE_TONES.info;
+            const ToneIcon = tone.icon;
+            return (
+              <div className="bg-white rounded-3xl shadow-2xl p-8 sm:p-10 text-center animate-scaleIn">
+                <div className={clsx('w-16 h-16 mx-auto rounded-full flex items-center justify-center', tone.iconWrap)}>
+                  <ToneIcon className={clsx('w-8 h-8', tone.iconColor)} />
+                </div>
+                <h2 className="text-2xl font-bold text-gray-900 mt-4">{notice.title}</h2>
+                <p className="text-gray-500 mt-1.5 max-w-md mx-auto">{notice.message}</p>
+
+                <div className="mt-8 flex flex-col sm:flex-row gap-3">
+                  <Button
+                    variant={tone.button}
+                    size="lg"
+                    className={notice.cancelLabel ? 'flex-1' : 'w-full'}
+                    onClick={notice.onConfirm}
+                  >
+                    {notice.confirmLabel || 'Continue'}
+                  </Button>
+                  {notice.cancelLabel && (
+                    <Button variant="outline" size="lg" className="flex-1" onClick={notice.onCancel || resetToMode}>
+                      {notice.cancelLabel}
+                    </Button>
+                  )}
+                </div>
+              </div>
+            );
+          })()}
+
+          {phase === 'early-reason' && employee && (() => {
+            const pad = (n) => String(n).padStart(2, '0');
+            const otHours = Number(shiftInfo?.approvedOvertimeHours || 0);
+            const endMin = minutesFromTime(shiftInfo?.endTime || ATTENDANCE_CONFIG.endTime) + Math.round(otHours * 60);
+            const earlyMin = Math.max(0, endMin - minutesFromTime(toTimeString(nowInTimezone(timezone))));
+            const hoursEarly = Math.floor(earlyMin / 60);
+            const minsEarly = earlyMin % 60;
+            return (
+              <div className="bg-white rounded-3xl shadow-2xl p-8 sm:p-10 w-full max-w-xl animate-fadeIn">
+                <div className="text-center">
+                  <div className="w-16 h-16 mx-auto rounded-full bg-amber-50 flex items-center justify-center">
+                    <Hand className="w-8 h-8 text-amber-500" />
+                  </div>
+                  <h2 className="text-2xl font-bold text-gray-900 mt-4">Clocking Out Early</h2>
+                  <p className="text-sm text-gray-500 mt-1.5">
+                    {employee.firstName} {employee.lastName}, your shift ends at{' '}
+                    <span className="font-semibold text-gray-900">
+                      {formatTime(`${pad((Math.floor(endMin / 60)) % 24)}:${pad(endMin % 60)}`)}
+                    </span>
+                    {otHours > 0 ? ` (${otHours}h approved overtime)` : ''}.
+                  </p>
+                  <p className="text-xs text-gray-400 mt-1">
+                    Early clock-outs are always allowed. Select the real reason - HR reviews every one.
+                  </p>
+                  {shiftInfo?.earlyLeave && (() => {
+                    const el = shiftInfo.earlyLeave;
+                    const over = el.used >= el.allowed;
+                    return (
+                      <div className={clsx(
+                        'mt-4 rounded-2xl border p-3 text-left text-xs leading-relaxed',
+                        over ? 'border-red-200 bg-red-50 text-red-700' : 'border-amber-200 bg-amber-50 text-amber-800'
+                      )}>
+                        {over
+                          ? `You have already used ${el.used} of ${el.allowed} early clock-outs in the last ${el.windowDays} days. This one will be recorded as UNEXCUSED.`
+                          : `Early clock-outs used in the last ${el.windowDays} days: ${el.used} of ${el.allowed}. After that, each one is recorded as unexcused.`}
+                        {earlyOutReason.reasonCode === 'SICK' && (
+                          <span className="block mt-1 font-semibold">
+                            Feeling unwell needs a medical certificate within {el.certificateHours} hours, or it will not be excused.
+                          </span>
+                        )}
+                      </div>
+                    );
+                  })()}
+                </div>
+
+                <div className="mt-6 grid grid-cols-2 sm:grid-cols-3 gap-3">
+                  {EARLY_OUT_REASONS.map(({ code, label, detail }) => {
+                    const selected = earlyOutReason.reasonCode === code;
+                    return (
+                      <button
+                        key={code}
+                        type="button"
+                        onClick={() => setEarlyOutReason((prev) => ({ ...prev, reasonCode: code }))}
+                        className={clsx(
+                          'rounded-2xl border-2 p-3 text-center transition-colors',
+                          selected ? 'border-amber-500 bg-amber-50' : 'border-gray-200 hover:border-amber-300'
+                        )}
+                      >
+                        <p className={clsx('text-sm font-semibold', selected ? 'text-amber-700' : 'text-gray-800')}>{label}</p>
+                        <p className="text-[11px] text-gray-400 mt-0.5">{detail}</p>
+                      </button>
+                    );
+                  })}
+                </div>
+
+                <div className="mt-5">
+                  <label className="block text-xs font-semibold uppercase tracking-wider text-gray-400">Note (optional)</label>
+                  <textarea
+                    value={earlyOutReason.reasonNote}
+                    onChange={(e) => setEarlyOutReason((prev) => ({ ...prev, reasonNote: e.target.value }))}
+                    rows={2}
+                    maxLength={1000}
+                    placeholder="Add a short note for HR (e.g. symptoms, what happened)..."
+                    className="mt-2 w-full rounded-2xl border border-gray-200 p-3 text-sm text-gray-900 outline-none focus:border-blue-400 focus:ring-2 focus:ring-blue-100 resize-none"
+                  />
+                  <p className="text-[11px] text-gray-400 mt-1.5">
+                    That leaves about {hoursEarly > 0 ? `${hoursEarly}h ` : ''}{minsEarly}m on your shift.
+                  </p>
+                </div>
+
+                <div className="mt-7 flex gap-3">
+                  <Button variant="secondary" className="flex-1 py-3" onClick={resetToMode}>Cancel</Button>
+                  <Button
+                    variant="primary"
+                    className="flex-1 py-3"
+                    disabled={!earlyOutReason.reasonCode}
+                    onClick={() => recordAttendance()}
+                  >
+                    Clock Out Early
+                  </Button>
+                </div>
+              </div>
+            );
+          })()}
+
+          {phase === 'locked' && (
+            <div className="bg-white rounded-3xl shadow-2xl p-8 sm:p-10 text-center animate-scaleIn">
+              <div className="w-16 h-16 mx-auto rounded-full bg-red-50 flex items-center justify-center">
+                <ShieldAlert className="w-8 h-8 text-red-500" />
+              </div>
+              <h2 className="text-2xl font-bold text-gray-900 mt-4">Face Verification Paused</h2>
+              <p className="text-gray-500 mt-1.5 max-w-md mx-auto">
+                {FACE_MAX_STRIKES} failed identity checks in a row. The face reader is paused for the countdown below. This incident has been logged and will be reviewed by HR.
+              </p>
+              <p className="mt-6 text-5xl font-bold text-red-600 tabular-nums">{lockSecondsLeft}</p>
+              <p className="text-sm text-gray-400 mt-2">seconds remaining</p>
+            </div>
+          )}
+
+          {phase === 'recording' && (
+            <div className="bg-white rounded-3xl shadow-2xl p-10 flex flex-col items-center text-center animate-fadeIn">
+              <Loader2 className="w-12 h-12 animate-spin text-blue-600" />
+              <p className="text-lg font-semibold text-gray-900 mt-5">
+                Recording {action === 'clock-in' ? 'clock in' : 'clock out'}...
+              </p>
+              <p className="text-sm text-gray-400 mt-1">Please wait a moment</p>
+            </div>
+          )}
+
+          {phase === 'success' && employee && (
+            <div className="bg-white rounded-3xl shadow-2xl p-10 text-center animate-scaleIn">
+              <div className={clsx(
+                'w-20 h-20 mx-auto rounded-full flex items-center justify-center',
+                successView.tone === 'amber' ? 'bg-amber-50' : successView.tone === 'blue' ? 'bg-blue-50' : 'bg-emerald-50'
+              )}>
+                <CheckCircle2 className={clsx(
+                  'w-10 h-10',
+                  successView.tone === 'amber' ? 'text-amber-500' : successView.tone === 'blue' ? 'text-blue-500' : 'text-emerald-500'
+                )} />
+              </div>
+              <h2 className="text-2xl font-bold text-gray-900 mt-5">{successView.title}</h2>
+              <p className="text-gray-500 mt-1.5">{successView.message}</p>
+              {successView.note && (
+                <div className={clsx(
+                  'mt-5 rounded-2xl p-4 text-left',
+                  successView.tone === 'amber' ? 'bg-amber-50' : successView.tone === 'blue' ? 'bg-blue-50' : 'bg-emerald-50'
+                )}>
+                  <p className={clsx(
+                    'text-sm font-semibold',
+                    successView.tone === 'amber' ? 'text-amber-700' : successView.tone === 'blue' ? 'text-blue-700' : 'text-emerald-700'
+                  )}>
+                    {successView.noteTitle}
+                  </p>
+                  <p className="text-xs text-gray-500 mt-0.5">{successView.note}</p>
+                </div>
+              )}
+              <div className="mt-8 grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div className="rounded-2xl bg-gray-50 p-4">
+                  <p className="text-xs font-semibold uppercase tracking-wider text-gray-400">Employee</p>
+                  <p className="text-base font-semibold text-gray-900 mt-1">{employee.firstName} {employee.lastName}</p>
+                  <p className="text-sm text-gray-500">{employee.id}</p>
+                </div>
+                <div className="rounded-2xl bg-gray-50 p-4">
+                  <p className="text-xs font-semibold uppercase tracking-wider text-gray-400">
+                    {recordedType === 'clock-in' ? 'Clocked In At' : 'Clocked Out At'}
+                  </p>
+                  <p className="text-base font-semibold text-gray-900 mt-1 tabular-nums">{formatTime(recordedAt)}</p>
+                  <p className="text-sm text-gray-500">{formatDate(toDateKey(nowInTimezone(timezone)))}</p>
+                </div>
+              </div>
+              {recordedType === 'clock-out' && recordedHours !== null && (
+                <div className="mt-4 rounded-2xl bg-blue-50 p-4">
+                  <p className="text-xs font-semibold uppercase tracking-wider text-blue-500">Total Hours Today</p>
+                  <p className="text-base font-bold text-blue-700 mt-1 tabular-nums">{recordedHours} hrs</p>
+                </div>
+              )}
+              <p className="text-sm text-gray-400 mt-7 flex items-center justify-center gap-1.5">
+                <Clock className="w-4 h-4" />
+                Returning to the terminal in a moment...
+              </p>
+            </div>
+          )}
+
+          {phase === 'completed' && employee && (
+            <div className="bg-white rounded-3xl shadow-2xl p-10 text-center animate-scaleIn">
+              <div className="w-20 h-20 mx-auto rounded-full bg-amber-50 flex items-center justify-center">
+                <UserCheck className="w-10 h-10 text-amber-500" />
+              </div>
+              <h2 className="text-2xl font-bold text-gray-900 mt-5">Attendance Already Recorded</h2>
+              <p className="text-gray-500 mt-1.5">
+                {employee.firstName} {employee.lastName} has already clocked in and out for today.
+              </p>
+              <div className="mt-6 inline-flex items-center gap-3 rounded-2xl bg-gray-50 px-6 py-3 text-sm text-gray-600">
+                <span className="flex items-center gap-1.5">
+                  <LogIn className="w-4 h-4 text-emerald-600" />
+                  {formatTime(todayRecord.clockIn)}
+                </span>
+                <span className="text-gray-300">→</span>
+                <span className="flex items-center gap-1.5">
+                  <LogOut className="w-4 h-4 text-amber-600" />
+                  {formatTime(todayRecord.clockOut)}
+                </span>
+              </div>
+              <p className="text-sm text-gray-400 mt-7 flex items-center justify-center gap-1.5">
+                <Clock className="w-4 h-4" />
+                Returning to the terminal in a moment...
+              </p>
+            </div>
+          )}
+        </div>
+      </main>
+
+      <footer className="pb-5 text-center">
+        <p className="text-blue-300/40 text-xs">
+          <span className="flex items-center justify-center gap-1.5">
+            <CalendarDays className="w-3.5 h-3.5" />
+            Facial recognition · {settings.location} · Shift starts {formatTime(ATTENDANCE_CONFIG.startTime)}
+          </span>
+        </p>
+      </footer>
+
+      <Suspense fallback={null}>
+        <FaceRecognitionModal
+          isOpen={phase === 'verify'}
+          employeeName={employee ? `${employee.firstName} ${employee.lastName}` : ''}
+          employeeId={employee ? employee.id : ''}
+          onComplete={handleFaceComplete}
+          onClose={handleFaceClose}
+          onMismatch={handleFaceMismatch}
+        />
+      </Suspense>
+
+      <KioskPinModal
+        isOpen={showUnlock}
+        onClose={() => { if (!unlockSubmitting) setShowUnlock(false); }}
+        title="Unlock Kiosk"
+        subtitle="Enter the secret kiosk PIN to access admin functions."
+        onSubmit={handleUnlockSubmit}
+        submitting={unlockSubmitting}
+        error={unlockError}
+      />
+    </div>
+  );
+}

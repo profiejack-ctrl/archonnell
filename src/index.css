@@ -1,0 +1,873 @@
+@import "tailwindcss";
+
+@font-face {
+  font-family: 'Poppins';
+  font-style: normal;
+  font-weight: 300;
+  font-display: swap;
+  src: url('/fonts/Poppins-Light.woff2') format('woff2');
+}
+@font-face {
+  font-family: 'Poppins';
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url('/fonts/Poppins-Regular.woff2') format('woff2');
+}
+@font-face {
+  font-family: 'Poppins';
+  font-style: normal;
+  font-weight: 500;
+  font-display: swap;
+  src: url('/fonts/Poppins-Medium.woff2') format('woff2');
+}
+@font-face {
+  font-family: 'Poppins';
+  font-style: normal;
+  font-weight: 600;
+  font-display: swap;
+  src: url('/fonts/Poppins-SemiBold.woff2') format('woff2');
+}
+@font-face {
+  font-family: 'Poppins';
+  font-style: normal;
+  font-weight: 700;
+  font-display: swap;
+  src: url('/fonts/Poppins-Bold.woff2') format('woff2');
+}
+
+@custom-variant dark (&:where(.dark, .dark *));
+
+@theme {
+  --color-navy-50: #E8EDF4;
+  --color-navy-100: #C5D0E3;
+  --color-navy-200: #9FB2D1;
+  --color-navy-300: #7994BF;
+  --color-navy-400: #5C7EB1;
+  --color-navy-500: #4068A3;
+  --color-navy-600: #3A5F9B;
+  --color-navy-700: #325491;
+  --color-navy-800: #2B4A87;
+  --color-navy-900: #0B1F3A;
+  --font-family-poppins: 'Poppins', sans-serif;
+}
+
+/* Base layer: element styles that must not override Tailwind utilities */
+@layer base {
+  /*
+    The phone layer.
+
+    Everything below exists to make a browser tab feel like an installed app rather than a web page
+    that happens to be narrow. None of it changes the desktop layout: each rule is inside a
+    max-width query, or applies to a property the desktop never relied on. The desktop UI is
+    untouched, which was the whole constraint.
+
+    What was actually wrong on a phone, and what fixes it:
+
+    - 100vh on a phone includes the space under the browser's own bars, so the bottom of a page
+      could never be scrolled to. 100dvh is the height the viewport really is right now.
+    - Pulling past the top or bottom edge showed the page's own background streaking (rubber
+      banding), which is the clearest "this is a website" tell there is.
+    - Tapping a button flashed a grey rectangle over it, because mobile browsers highlight tappable
+      elements by default.
+    - Every button, link and row inherited a text cursor and could be long-pressed into a text
+      selection, so a stray thumb dragged a blue highlight across a card.
+    - Tap targets were sized for a mouse. The platform minimum is 44px; a phone makes you pay for
+      anything smaller.
+    - Momentum scrolling on Android only feels right when the scroll container is the one being
+      dragged, so the overscroll chain is contained to it.
+  */
+  @media (max-width: 1023px) {
+    html {
+      /* Real viewport height, not the 100vh lie. */
+      height: 100%;
+      -webkit-text-size-adjust: 100%;
+      text-size-adjust: 100%;
+    }
+
+    body {
+      /* Contains the rubber band to this element instead of the whole document. */
+      overscroll-behavior-y: contain;
+      -webkit-overflow-scrolling: touch;
+      /* Stops the grey tap flash on every control. */
+      -webkit-tap-highlight-color: transparent;
+      /* A long press on a card should not start selecting the words inside it. */
+      -webkit-user-select: none;
+      user-select: none;
+    }
+
+    /* Text people actually need to read or copy keeps its selection. */
+    input,
+    textarea,
+    [contenteditable='true'],
+    .selectable {
+      -webkit-user-select: text;
+      user-select: text;
+    }
+
+    button,
+    a,
+    [role='button'],
+    label,
+    summary {
+      /* No grey flash, no tap delay waiting to see if this becomes a double tap. */
+      touch-action: manipulation;
+      -webkit-tap-highlight-color: transparent;
+    }
+
+    /* A finger is not a cursor. */
+    button,
+    [role='button'],
+    summary,
+    label {
+      cursor: pointer;
+    }
+
+    /* Disabled controls should not invite a press at all. */
+    button:disabled,
+    [aria-disabled='true'] {
+      pointer-events: none;
+    }
+
+    /*
+      The 44px floor. Applied through a custom property rather than by rewriting every component,
+      so it nudges controls that are close without stretching a deliberately compact one (a chip, a
+      checkbox, a pagination arrow that already meets the target).
+    */
+    :where(button, a[role='button'], [role='tab']) {
+      min-height: max(44px, var(--tap-min, 0px));
+    }
+
+    /* Native momentum for anything that scrolls on its own. */
+    :where(main, [class*='overflow-y-auto'], [class*='overflow-x-auto']) {
+      -webkit-overflow-scrolling: touch;
+      overscroll-behavior: contain;
+    }
+
+    /* Modals slide up from the bottom edge, the way a bottom sheet does on Android, instead of
+       fading in place. transform + opacity only, so it stays on the compositor. */
+    @keyframes sheetUp {
+      from { transform: translateY(16px); opacity: 0; }
+      to { transform: none; opacity: 1; }
+    }
+
+    /* Inputs at least 16px, or iOS Safari zooms the whole page in when a field is focused. */
+    input,
+    select,
+    textarea {
+      font-size: max(16px, 1em);
+    }
+  }
+
+  /*
+    Standalone mode only (an installed app, not a browser tab). There is no address bar to pull
+    down, so the page is allowed to paint into the notch area and the safe-area padding becomes the
+    only thing keeping content off the phone's furniture.
+  */
+  @media (display-mode: standalone) {
+    html,
+    body {
+      height: 100%;
+      overflow: hidden;
+    }
+  }
+
+  body {
+    font-family: 'Poppins', sans-serif;
+    background-color: #F8FAFC;
+    color: #1E293B;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    transition: background-color 0.2s ease, color 0.2s ease;
+  }
+
+  .dark body {
+    background-color: #0B1220;
+    color: #E2E8F0;
+  }
+
+  ::selection {
+    background-color: #3b82f6;
+    color: white;
+  }
+
+  :focus-visible {
+    outline: 2px solid #3b82f6;
+    outline-offset: 2px;
+    border-radius: 8px;
+  }
+}
+
+/* Scrollbar styles (pseudo-elements Tailwind doesn't target — safe outside layers) */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #cbd5e1;
+  border-radius: 999px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #94a3b8;
+}
+
+/* Keyframes */
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: none; }
+}
+
+@keyframes slideIn {
+  from { opacity: 0; transform: translateX(-12px); }
+  to { opacity: 1; transform: none; }
+}
+
+@keyframes scaleIn {
+  from { opacity: 0; transform: scale(0.96) translateY(4px); }
+  to { opacity: 1; transform: none; }
+}
+
+@keyframes slideUp {
+  from { opacity: 0; transform: translateY(16px); }
+  to { opacity: 1; transform: none; }
+}
+
+@keyframes slideDown {
+  from { opacity: 0; transform: translateY(-8px); }
+  to { opacity: 1; transform: none; }
+}
+
+@keyframes pulse-soft {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.7; }
+}
+
+/* The highlight is a separate layer moved with transform, never a repaint of the box itself.
+   The old version animated background-position, which forces a repaint of every skeleton element on
+   every frame - and a loading page can show ~50 of them at once, which made phones stutter badly. */
+@keyframes shimmer {
+  0% { transform: translateX(-100%); }
+  100% { transform: translateX(100%); }
+}
+
+@keyframes scanline {
+  0%, 100% { top: 12%; }
+  50% { top: 86%; }
+}
+
+/* Face scan overlay (FaceScanOverlay.jsx) - transform/opacity only, so it stays
+   smooth on the compositor thread while face detection blocks the main thread. */
+@keyframes face-sweep {
+  0%   { transform: translateY(-100%); }
+  100% { transform: translateY(357%); }
+}
+
+@keyframes face-dot {
+  0%, 100% { opacity: 0.15; transform: scale(0.6); }
+  50%      { opacity: 1;    transform: scale(1.4); }
+}
+
+.face-oval {
+  border-radius: 50% 50% 48% 48% / 42% 42% 58% 58%;
+  box-shadow: 0 0 0 999px rgba(11, 31, 58, 0.45);
+}
+
+.face-sweep {
+  background: linear-gradient(to bottom, transparent, rgba(96, 165, 250, 0.55), transparent);
+  border-bottom: 2px solid rgba(147, 197, 253, 0.9);
+  will-change: transform;
+  animation: face-sweep 1.6s ease-in-out infinite;
+}
+
+.face-dot {
+  animation: face-dot 1.2s ease-in-out infinite;
+}
+
+/* Utility layer: custom utility classes participate in Tailwind's cascade */
+@layer utilities {
+  .animate-fadeIn {
+    animation: fadeIn 0.3s ease-out;
+  }
+
+  .animate-slideIn {
+    animation: slideIn 0.3s ease-out;
+  }
+
+  .animate-scaleIn {
+    animation: scaleIn 0.2s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+  }
+
+  .animate-slideUp {
+    animation: slideUp 0.35s ease-out;
+  }
+
+  .animate-slideDown {
+    animation: slideDown 0.25s ease-out;
+  }
+
+  .animate-pulse-soft {
+    animation: pulse-soft 2s ease-in-out infinite;
+  }
+
+  .animate-scanline {
+    animation: scanline 2.4s ease-in-out infinite;
+  }
+}
+
+/* Component layer: reusable component classes */
+@layer components {
+  .skeleton {
+    position: relative;
+    overflow: hidden;
+    background: #e2e8f0;
+    border-radius: 8px;
+  }
+
+  .skeleton::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    transform: translateX(-100%);
+    background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.7) 50%, transparent);
+    animation: shimmer 1.5s ease-in-out infinite;
+    will-change: transform;
+  }
+
+  .dark .skeleton {
+    background: #1e293b;
+  }
+
+  .dark .skeleton::after {
+    background: linear-gradient(90deg, transparent, rgba(148, 163, 184, 0.16) 50%, transparent);
+  }
+
+  /* Someone who has asked their phone not to animate things gets a plain grey block instead. */
+  @media (prefers-reduced-motion: reduce) {
+    .skeleton::after {
+      animation: none;
+      transform: none;
+    }
+  }
+
+  /*
+    The one table design, for every module.
+
+    Each module wrote its own <table> markup, and the result was fifteen tables that shared nothing:
+    some had a tinted header, some did not; row heights ranged from a cramped 40px to a loose 64px;
+    the hairline between rows was grey in one module and blue in the next. Reading down a list of
+    modules, the eye had to re-learn the table every time, which is the "bland, no style at all"
+    feeling - not one ugly table, but no consistent one either.
+
+    So the design is written once here and scoped to .table-frame, which is the shared wrapper every
+    module already routes its table through (TableShell). Fifteen files get the new look without
+    being edited, and they cannot drift apart again, because there is only one place to change it.
+
+    The rules are nested under .table-frame rather than applied as a .data-table class on each table
+    on purpose: a class has to be added to every table by hand, and the first table someone adds
+    next year will not have it.
+
+    Specificity is the reason this works at all. A module that styled its own cells inline still
+    wins, because an inline class or style beats a descendant selector. Nothing is overridden that
+    the author meant.
+
+    The parts that carry the design:
+
+    - the header is a real band, not a row of grey text: navy tint, a bottom rule, small uppercase
+      labels with wide tracking. It is the anchor you find the table by.
+    - one row height everywhere. Rhythm is what makes a grid of numbers readable; without it the eye
+      has to re-measure on every line.
+    - hairline separators at full strength, and a zebra tint so a wide row can be followed across
+      the columns without losing it. The two together are subtle on purpose - either alone is worse.
+    - the first column is the subject of the row, so it carries the weight. The rest is data.
+    - numeric columns right-align, because digits compared down a column only line up that way.
+    - hover and active states are a single blue tint, so a clickable row is discoverable.
+  */
+  .table-frame table {
+    width: 100%;
+    border-collapse: separate;
+    border-spacing: 0;
+  }
+
+  .table-frame thead th {
+    position: sticky;
+    top: 0;
+    z-index: 10;
+    background-color: #EEF2F7;
+    color: #475569;
+    font-size: 0.6875rem;
+    font-weight: 700;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    text-align: left;
+    padding: 0.75rem 1rem;
+    border-bottom: 1px solid #CBD5E1;
+  }
+
+  .table-frame thead tr:last-child th {
+    /* A table with a grouped header has two header rows; only the bottom one gets the rule, so the
+       group label above it reads as a band rather than as another line of the same weight. */
+    box-shadow: inset 0 -1px 0 #CBD5E1;
+  }
+
+  .table-frame tbody td,
+  .table-frame tbody th {
+    padding: 0.8125rem 1rem;
+    font-size: 0.875rem;
+    color: #334155;
+    vertical-align: middle;
+    text-align: left;
+    border-bottom: 1px solid #F1F5F9;
+    /* A table on a phone has more columns than the screen has width. Cells stop shrinking to
+       unreadable slivers and the frame scrolls sideways instead (see TableShell). */
+    white-space: nowrap;
+  }
+
+  .table-frame tbody tr {
+    transition: background-color 0.12s ease;
+  }
+
+  .table-frame tbody tr:nth-child(even) {
+    background-color: #FAFBFC;
+  }
+
+  /* A row you can click says so on hover, and says it again while the finger is down - on a phone
+     there is no hover, and the press feedback is the only cue there is.
+     Both selectors are needed: rows that already carry cursor-pointer from the original markup get
+     the treatment without being touched, and data-clickable is available to a row written later. */
+  .table-frame tbody tr[data-clickable='true'],
+  .table-frame tbody tr.cursor-pointer {
+    cursor: pointer;
+  }
+
+  .table-frame tbody tr[data-clickable='true']:hover,
+  .table-frame tbody tr.cursor-pointer:hover {
+    background-color: #EFF6FF;
+  }
+
+  .table-frame tbody tr[data-clickable='true']:active,
+  .table-frame tbody tr.cursor-pointer:active {
+    background-color: #DBEAFE;
+  }
+
+  .table-frame tbody tr:last-child td,
+  .table-frame tbody tr:last-child th {
+    border-bottom: none;
+  }
+
+  /* The subject of the row. */
+  .table-frame tbody td:first-child,
+  .table-frame tbody th:first-child {
+    font-weight: 600;
+    color: #0F172A;
+  }
+
+  /* Digits line up only when they are all on the same edge. Applied per cell by the modules that
+     have real numbers, never automatically: a date or a status is not a number, and centring those
+     would read worse than leaving them left alone. */
+  .table-frame .num {
+    text-align: right;
+    font-variant-numeric: tabular-nums;
+  }
+
+  /* Anything a module marks as a long value - an address, a reason - is allowed to wrap rather than
+     stretching the whole table out of reach. */
+  .table-frame .wrap {
+    white-space: normal;
+    min-width: 14rem;
+  }
+
+  /* A pinned first column. On a wide table scrolled sideways on a phone, losing the name column
+     means every remaining value belongs to nobody. */
+  .table-frame .sticky-col {
+    position: sticky;
+    left: 0;
+    z-index: 5;
+    background-color: inherit;
+  }
+
+  .table-frame thead th.sticky-col {
+    z-index: 15;
+    background-color: #EEF2F7;
+  }
+
+  /* A shadow only on the edge that has more table past it, so a pinned column reads as "there is
+     more this way" instead of as a permanent border. */
+  .table-frame .sticky-col.is-pinned {
+    box-shadow: 6px 0 8px -6px rgba(15, 23, 42, 0.16);
+  }
+}
+
+/*
+  Dark mode - gothic (black / gray / white).
+
+  How this works, and why it is written this way:
+
+  The app reuses the same small set of Tailwind colour utilities for every surface,
+  text and border in every page - bg-white cards, bg-gray-50 page fills, text-gray-900
+  headings, text-gray-500 subtext, border-gray-100 rules. Rather than tagging hundreds
+  of elements with dark: variants (and inevitably missing some, which is what makes a
+  half-themed screen), the palette is inverted one level up: when .dark is on <html>,
+  those exact utility classes resolve to dark values. Every page, the sidebar, the
+  topbar, every modal, dropdown and popover is built from them, so they all invert
+  together and there is no part of the system left light.
+
+  The generated block below covers every colour utility that appears anywhere in
+  src/, so a new screen cannot fall outside it. Values are chosen by the ROLE a token
+  plays rather than by inverting the scale blindly: bg-gray-900 is a deliberate dark
+  backdrop (camera preview, active tab) and must stay dark, while text-gray-900 is the
+  primary text and must become near-white.
+
+  Saturated colours are kept, but tuned for a near-black ground - a status still reads
+  as red, green or amber without glaring. Two considerations that decide the rest:
+
+  - Text is never dimmed below a readable level. Muted text sits at #a3a3ae, which is
+    roughly 7:1 on the card colour, so a dark screen does not become an eyestrain.
+  - color-scheme follows the theme, so the parts of a control this app does not draw
+    itself - the native select dropdown, the date input's calendar picker, scrollbars,
+    the text cursor - are dark too, instead of a bright white list opening over a dark
+    page.
+*/
+
+/* Native controls, scrollbars and form internals follow the active theme. */
+:root { color-scheme: light; }
+.dark { color-scheme: dark; }
+
+.dark body,
+.dark #root {
+  background-color: #08080a;
+  color: #ececf2;
+}
+
+/* The page fill is written as an arbitrary colour in the layouts, so it needs its own
+   rule - this is the main content area behind every screen. */
+.dark .bg-\[\#F8FAFC\] { background-color: #08080a; }
+.dark .text-\[\#0B1F3A\] { color: #ececf2; }
+
+/* Scrollbars: a light grey bar on a black page is a bright stripe. */
+.dark ::-webkit-scrollbar-thumb { background: #2e2e36; }
+.dark ::-webkit-scrollbar-thumb:hover { background: #45454f; }
+.dark ::-webkit-scrollbar-track { background: #0d0d10; }
+
+/* Tables (the shared .table-frame used by every list in the system). */
+.dark .table-frame thead th {
+  background-color: #17171c;
+  color: #a3a3ae;
+  border-bottom-color: #2e2e36;
+}
+.dark .table-frame thead tr:last-child th { box-shadow: inset 0 -1px 0 #2e2e36; }
+.dark .table-frame thead th.sticky-col { background-color: #17171c; }
+.dark .table-frame tbody td,
+.dark .table-frame tbody th {
+  color: #c6c6d0;
+  border-bottom-color: #1c1c22;
+}
+.dark .table-frame tbody tr:nth-child(even) { background-color: #0d0d10; }
+.dark .table-frame tbody td:first-child,
+.dark .table-frame tbody th:first-child { color: #ececf2; }
+.dark .table-frame tbody tr[data-clickable='true']:hover,
+.dark .table-frame tbody tr.cursor-pointer:hover { background-color: #14213a; }
+.dark .table-frame tbody tr[data-clickable='true']:active,
+.dark .table-frame tbody tr.cursor-pointer:active { background-color: #1b2c4d; }
+.dark .table-frame .sticky-col.is-pinned { box-shadow: 6px 0 8px -6px rgba(0, 0, 0, 0.7); }
+
+/* Loading placeholders. */
+.dark .skeleton { background: #17171c; }
+.dark .skeleton::after {
+  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.07) 50%, transparent);
+}
+
+/*
+  Generated: one rule per colour utility found anywhere in src/, so the theme cannot
+  be half-applied. Regenerate with logs/gen_dark.py if a screen starts using a colour
+  this block does not list.
+*/
+
+/* 222 rules from 234 distinct utilities */
+  .dark .bg-amber-50\/50 { background-color: color-mix(in oklab, hsl(38 38% 7%) 50%, transparent); }
+  .dark .bg-amber-50 { background-color: hsl(38 38% 7%); }
+  .dark .bg-amber-50\/70 { background-color: color-mix(in oklab, hsl(38 38% 7%) 70%, transparent); }
+  .dark .bg-amber-50\/60 { background-color: color-mix(in oklab, hsl(38 38% 7%) 60%, transparent); }
+  .dark .bg-amber-50\/30 { background-color: color-mix(in oklab, hsl(38 38% 7%) 30%, transparent); }
+  .dark .bg-amber-100 { background-color: hsl(38 40% 11%); }
+  .dark .bg-amber-200 { background-color: hsl(38 40% 16%); }
+  .dark .bg-amber-400\/20 { background-color: color-mix(in oklab, hsl(38 74% 64%) 20%, transparent); }
+  .dark .bg-amber-400 { background-color: hsl(38 74% 64%); }
+  .dark .bg-amber-500 { background-color: hsl(38 72% 60%); }
+  .dark .bg-amber-600 { background-color: hsl(38 68% 55%); }
+  .dark .bg-amber-700 { background-color: hsl(38 58% 34%); }
+  .dark .bg-blue-50\/70 { background-color: color-mix(in oklab, hsl(217 38% 7%) 70%, transparent); }
+  .dark .bg-blue-50\/40 { background-color: color-mix(in oklab, hsl(217 38% 7%) 40%, transparent); }
+  .dark .bg-blue-50 { background-color: hsl(217 38% 7%); }
+  .dark .bg-blue-50\/60 { background-color: color-mix(in oklab, hsl(217 38% 7%) 60%, transparent); }
+  .dark .bg-blue-50\/30 { background-color: color-mix(in oklab, hsl(217 38% 7%) 30%, transparent); }
+  .dark .bg-blue-50\/50 { background-color: color-mix(in oklab, hsl(217 38% 7%) 50%, transparent); }
+  .dark .bg-blue-100 { background-color: hsl(217 40% 11%); }
+  .dark .bg-blue-300 { background-color: hsl(217 38% 26%); }
+  .dark .bg-blue-500 { background-color: hsl(217 72% 60%); }
+  .dark .bg-blue-600 { background-color: hsl(217 68% 55%); }
+  .dark .bg-blue-700 { background-color: hsl(217 58% 34%); }
+  .dark .bg-blue-800 { background-color: hsl(217 56% 27%); }
+  .dark .bg-cyan-500 { background-color: hsl(188 72% 60%); }
+  .dark .bg-emerald-50 { background-color: hsl(160 38% 7%); }
+  .dark .bg-emerald-50\/60 { background-color: color-mix(in oklab, hsl(160 38% 7%) 60%, transparent); }
+  .dark .bg-emerald-100 { background-color: hsl(160 40% 11%); }
+  .dark .bg-emerald-300 { background-color: hsl(160 38% 26%); }
+  .dark .bg-emerald-400 { background-color: hsl(160 74% 64%); }
+  .dark .bg-emerald-400\/10 { background-color: color-mix(in oklab, hsl(160 74% 64%) 10%, transparent); }
+  .dark .bg-emerald-500\/90 { background-color: color-mix(in oklab, hsl(160 72% 60%) 90%, transparent); }
+  .dark .bg-emerald-500 { background-color: hsl(160 72% 60%); }
+  .dark .bg-emerald-600 { background-color: hsl(160 68% 55%); }
+  .dark .bg-emerald-700 { background-color: hsl(160 58% 34%); }
+  .dark .bg-emerald-800 { background-color: hsl(160 56% 27%); }
+  .dark .bg-gray-50\/70 { background-color: color-mix(in oklab, #08080a 70%, transparent); }
+  .dark .bg-gray-50 { background-color: #08080a; }
+  .dark .bg-gray-50\/30 { background-color: color-mix(in oklab, #08080a 30%, transparent); }
+  .dark .bg-gray-50\/60 { background-color: color-mix(in oklab, #08080a 60%, transparent); }
+  .dark .bg-gray-50\/80 { background-color: color-mix(in oklab, #08080a 80%, transparent); }
+  .dark .bg-gray-50\/50 { background-color: color-mix(in oklab, #08080a 50%, transparent); }
+  .dark .bg-gray-100 { background-color: #101014; }
+  .dark .bg-gray-100\/50 { background-color: color-mix(in oklab, #101014 50%, transparent); }
+  .dark .bg-gray-200 { background-color: #17171c; }
+  .dark .bg-gray-300 { background-color: #232329; }
+  .dark .bg-gray-400 { background-color: #34343c; }
+  .dark .bg-gray-500 { background-color: #55555f; }
+  .dark .bg-gray-800 { background-color: #1a1a1e; }
+  .dark .bg-gray-900 { background-color: #0f0f12; }
+  .dark .bg-green-50 { background-color: hsl(142 38% 7%); }
+  .dark .bg-indigo-50 { background-color: hsl(239 38% 7%); }
+  .dark .bg-indigo-100 { background-color: hsl(239 40% 11%); }
+  .dark .bg-indigo-500 { background-color: hsl(239 72% 60%); }
+  .dark .bg-pink-50 { background-color: hsl(330 38% 7%); }
+  .dark .bg-pink-500 { background-color: hsl(330 72% 60%); }
+  .dark .bg-purple-50 { background-color: hsl(270 38% 7%); }
+  .dark .bg-purple-100 { background-color: hsl(270 40% 11%); }
+  .dark .bg-purple-500 { background-color: hsl(270 72% 60%); }
+  .dark .bg-red-50\/40 { background-color: color-mix(in oklab, hsl(359 38% 7%) 40%, transparent); }
+  .dark .bg-red-50 { background-color: hsl(359 38% 7%); }
+  .dark .bg-red-50\/60 { background-color: color-mix(in oklab, hsl(359 38% 7%) 60%, transparent); }
+  .dark .bg-red-100 { background-color: hsl(359 40% 11%); }
+  .dark .bg-red-400 { background-color: hsl(359 74% 64%); }
+  .dark .bg-red-500 { background-color: hsl(359 72% 60%); }
+  .dark .bg-red-600 { background-color: hsl(359 68% 55%); }
+  .dark .bg-red-700 { background-color: hsl(359 58% 34%); }
+  .dark .bg-red-800 { background-color: hsl(359 56% 27%); }
+  .dark .bg-rose-50 { background-color: hsl(350 38% 7%); }
+  .dark .bg-rose-100 { background-color: hsl(350 40% 11%); }
+  .dark .bg-rose-200 { background-color: hsl(350 40% 16%); }
+  .dark .bg-rose-500 { background-color: hsl(350 72% 60%); }
+  .dark .bg-sky-50 { background-color: hsl(199 38% 7%); }
+  .dark .bg-sky-500 { background-color: hsl(199 72% 60%); }
+  .dark .bg-teal-50 { background-color: hsl(173 38% 7%); }
+  .dark .bg-teal-100 { background-color: hsl(173 40% 11%); }
+  .dark .bg-teal-500 { background-color: hsl(173 72% 60%); }
+  .dark .bg-violet-50 { background-color: hsl(258 38% 7%); }
+  .dark .bg-violet-500 { background-color: hsl(258 72% 60%); }
+  .dark .bg-white\/25 { background-color: color-mix(in oklab, #ffffff 25%, transparent); }
+  .dark .bg-white\/20 { background-color: color-mix(in oklab, #ffffff 20%, transparent); }
+  .dark .bg-white { background-color: #101014; }
+  .dark .bg-white\/70 { background-color: color-mix(in oklab, #ffffff 70%, transparent); }
+  .dark .bg-white\/15 { background-color: color-mix(in oklab, #ffffff 15%, transparent); }
+  .dark .bg-white\/10 { background-color: color-mix(in oklab, #ffffff 10%, transparent); }
+  .dark .border-amber-100 { border-color: hsl(38 40% 18%); }
+  .dark .border-amber-200 { border-color: hsl(38 40% 28%); }
+  .dark .border-amber-300 { border-color: hsl(38 40% 36%); }
+  .dark .border-amber-400 { border-color: hsl(38 68% 54%); }
+  .dark .border-amber-500 { border-color: hsl(38 68% 56%); }
+  .dark .border-blue-100 { border-color: hsl(217 40% 18%); }
+  .dark .border-blue-200 { border-color: hsl(217 40% 28%); }
+  .dark .border-blue-300 { border-color: hsl(217 40% 36%); }
+  .dark .border-blue-400 { border-color: hsl(217 68% 54%); }
+  .dark .border-blue-400\/80 { border-color: color-mix(in oklab, hsl(217 68% 54%) 80%, transparent); }
+  .dark .border-blue-500 { border-color: hsl(217 68% 56%); }
+  .dark .border-blue-600 { border-color: hsl(217 66% 54%); }
+  .dark .border-emerald-100 { border-color: hsl(160 40% 18%); }
+  .dark .border-emerald-200 { border-color: hsl(160 40% 28%); }
+  .dark .border-emerald-400 { border-color: hsl(160 68% 54%); }
+  .dark .border-gray-50 { border-color: #1c1c22; }
+  .dark .border-gray-100 { border-color: #232329; }
+  .dark .border-gray-100\/80 { border-color: color-mix(in oklab, #232329 80%, transparent); }
+  .dark .border-gray-200 { border-color: #2e2e36; }
+  .dark .border-gray-200\/80 { border-color: color-mix(in oklab, #2e2e36 80%, transparent); }
+  .dark .border-gray-300 { border-color: #3a3a44; }
+  .dark .border-gray-900 { border-color: #2e2e36; }
+  .dark .border-pink-200 { border-color: hsl(330 40% 28%); }
+  .dark .border-pink-400 { border-color: hsl(330 68% 54%); }
+  .dark .border-purple-100 { border-color: hsl(270 40% 18%); }
+  .dark .border-purple-200 { border-color: hsl(270 40% 28%); }
+  .dark .border-purple-400 { border-color: hsl(270 68% 54%); }
+  .dark .border-red-100 { border-color: hsl(359 40% 18%); }
+  .dark .border-red-200 { border-color: hsl(359 40% 28%); }
+  .dark .border-red-300 { border-color: hsl(359 40% 36%); }
+  .dark .border-red-500 { border-color: hsl(359 68% 56%); }
+  .dark .border-white\/15 { border-color: color-mix(in oklab, #ffffff 15%, transparent); }
+  .dark .border-white\/40 { border-color: color-mix(in oklab, #ffffff 40%, transparent); }
+  .dark .border-white { border-color: #101014; }
+  .dark .divide-gray-50 { border-color: #1c1c22; }
+  .dark .divide-gray-100\/70 { border-color: color-mix(in oklab, #232329 70%, transparent); }
+  .dark .divide-gray-100 { border-color: #232329; }
+  .dark .from-amber-50 { from-color: hsl(38 38% 7%); }
+  .dark .from-amber-500 { from-color: hsl(38 72% 60%); }
+  .dark .from-blue-500 { from-color: hsl(217 72% 60%); }
+  .dark .from-blue-600 { from-color: hsl(217 68% 55%); }
+  .dark .from-emerald-50 { from-color: hsl(160 38% 7%); }
+  .dark .from-emerald-500 { from-color: hsl(160 72% 60%); }
+  .dark .from-emerald-600 { from-color: hsl(160 68% 55%); }
+  .dark .from-navy-900 { from-color: hsl(215 54% 21%); }
+  .dark .from-purple-500 { from-color: hsl(270 72% 60%); }
+  .dark .from-red-600 { from-color: hsl(359 68% 55%); }
+  .dark .from-sky-500 { from-color: hsl(199 72% 60%); }
+  .dark .from-slate-500 { from-color: hsl(215 72% 60%); }
+  .dark .from-white { from-color: #101014; }
+  .dark .from-white\/90 { from-color: color-mix(in oklab, #ffffff 90%, transparent); }
+  .dark .ring-amber-400 { ring: hsl(38 68% 54%); }
+  .dark .ring-black\/5 { ring: #000000; }
+  .dark .ring-blue-100 { ring: hsl(217 40% 18%); }
+  .dark .ring-blue-200 { ring: hsl(217 40% 28%); }
+  .dark .ring-blue-400 { ring: hsl(217 68% 54%); }
+  .dark .ring-blue-500\/15 { ring: color-mix(in oklab, hsl(217 68% 56%) 15%, transparent); }
+  .dark .ring-blue-500\/30 { ring: color-mix(in oklab, hsl(217 68% 56%) 30%, transparent); }
+  .dark .ring-blue-500\/20 { ring: color-mix(in oklab, hsl(217 68% 56%) 20%, transparent); }
+  .dark .ring-blue-500\/40 { ring: color-mix(in oklab, hsl(217 68% 56%) 40%, transparent); }
+  .dark .ring-blue-500 { ring: hsl(217 68% 56%); }
+  .dark .ring-blue-600 { ring: hsl(217 66% 54%); }
+  .dark .ring-emerald-500 { ring: hsl(160 68% 56%); }
+  .dark .ring-red-300 { ring: hsl(359 40% 36%); }
+  .dark .ring-red-400 { ring: hsl(359 68% 54%); }
+  .dark .ring-red-500\/15 { ring: color-mix(in oklab, hsl(359 68% 56%) 15%, transparent); }
+  .dark .ring-white { ring: #101014; }
+  .dark .text-amber-300\/80 { color: color-mix(in oklab, hsl(38 80% 72%) 80%, transparent); }
+  .dark .text-amber-500 { color: hsl(38 72% 62%); }
+  .dark .text-amber-600 { color: hsl(38 70% 60%); }
+  .dark .text-amber-700 { color: hsl(38 85% 78%); }
+  .dark .text-amber-800 { color: hsl(38 88% 85%); }
+  .dark .text-amber-900 { color: hsl(38 90% 91%); }
+  .dark .text-blue-100 { color: hsl(217 80% 72%); }
+  .dark .text-blue-200\/70 { color: color-mix(in oklab, hsl(217 80% 72%) 70%, transparent); }
+  .dark .text-blue-200 { color: hsl(217 80% 72%); }
+  .dark .text-blue-300\/40 { color: color-mix(in oklab, hsl(217 80% 72%) 40%, transparent); }
+  .dark .text-blue-300 { color: hsl(217 80% 72%); }
+  .dark .text-blue-300\/60 { color: color-mix(in oklab, hsl(217 80% 72%) 60%, transparent); }
+  .dark .text-blue-400 { color: hsl(217 78% 68%); }
+  .dark .text-blue-500 { color: hsl(217 72% 62%); }
+  .dark .text-blue-600 { color: hsl(217 70% 60%); }
+  .dark .text-blue-700 { color: hsl(217 85% 78%); }
+  .dark .text-blue-800 { color: hsl(217 88% 85%); }
+  .dark .text-blue-900\/70 { color: color-mix(in oklab, hsl(217 90% 91%) 70%, transparent); }
+  .dark .text-blue-900 { color: hsl(217 90% 91%); }
+  .dark .text-blue-900\/80 { color: color-mix(in oklab, hsl(217 90% 91%) 80%, transparent); }
+  .dark .text-emerald-500 { color: hsl(160 72% 62%); }
+  .dark .text-emerald-600 { color: hsl(160 70% 60%); }
+  .dark .text-emerald-700 { color: hsl(160 85% 78%); }
+  .dark .text-emerald-800 { color: hsl(160 88% 85%); }
+  .dark .text-emerald-900 { color: hsl(160 90% 91%); }
+  .dark .text-gray-300 { color: #c6c6d0; }
+  .dark .text-gray-400 { color: #8b8b96; }
+  .dark .text-gray-500 { color: #a3a3ae; }
+  .dark .text-gray-600 { color: #b8b8c2; }
+  .dark .text-gray-700 { color: #c9c9d2; }
+  .dark .text-gray-800 { color: #dcdce4; }
+  .dark .text-gray-900 { color: #ececf2; }
+  .dark .text-green-600 { color: hsl(142 70% 60%); }
+  .dark .text-indigo-600 { color: hsl(239 70% 60%); }
+  .dark .text-indigo-700 { color: hsl(239 85% 78%); }
+  .dark .text-pink-600 { color: hsl(330 70% 60%); }
+  .dark .text-pink-700 { color: hsl(330 85% 78%); }
+  .dark .text-purple-500 { color: hsl(270 72% 62%); }
+  .dark .text-purple-600 { color: hsl(270 70% 60%); }
+  .dark .text-purple-700 { color: hsl(270 85% 78%); }
+  .dark .text-red-300 { color: hsl(359 80% 72%); }
+  .dark .text-red-500 { color: hsl(359 72% 62%); }
+  .dark .text-red-600 { color: hsl(359 70% 60%); }
+  .dark .text-red-700 { color: hsl(359 85% 78%); }
+  .dark .text-red-800 { color: hsl(359 88% 85%); }
+  .dark .text-red-900 { color: hsl(359 90% 91%); }
+  .dark .text-rose-600 { color: hsl(350 70% 60%); }
+  .dark .text-rose-700 { color: hsl(350 85% 78%); }
+  .dark .text-sky-600 { color: hsl(199 70% 60%); }
+  .dark .text-sky-700 { color: hsl(199 85% 78%); }
+  .dark .text-slate-300 { color: hsl(215 80% 72%); }
+  .dark .text-slate-400 { color: hsl(215 78% 68%); }
+  .dark .text-slate-500 { color: hsl(215 72% 62%); }
+  .dark .text-teal-600 { color: hsl(173 70% 60%); }
+  .dark .text-teal-700 { color: hsl(173 85% 78%); }
+  .dark .text-violet-600 { color: hsl(258 70% 60%); }
+  .dark .to-amber-50\/30 { to-color: color-mix(in oklab, hsl(38 38% 7%) 30%, transparent); }
+  .dark .to-blue-500 { to-color: hsl(217 72% 60%); }
+  .dark .to-blue-600 { to-color: hsl(217 68% 55%); }
+  .dark .to-cyan-600 { to-color: hsl(188 68% 55%); }
+  .dark .to-emerald-50\/30 { to-color: color-mix(in oklab, hsl(160 38% 7%) 30%, transparent); }
+  .dark .to-emerald-600 { to-color: hsl(160 68% 55%); }
+  .dark .to-emerald-800 { to-color: hsl(160 56% 27%); }
+  .dark .to-navy-700 { to-color: hsl(215 58% 34%); }
+  .dark .to-orange-500 { to-color: hsl(25 72% 60%); }
+  .dark .to-purple-600 { to-color: hsl(270 68% 55%); }
+  .dark .to-red-800 { to-color: hsl(359 56% 27%); }
+  .dark .to-slate-600 { to-color: hsl(215 68% 55%); }
+  .dark .via-emerald-700 { via-color: hsl(160 58% 34%); }
+  .dark .via-red-700 { via-color: hsl(359 58% 34%); }
+
+@media print {
+  /* Printing is always the light theme: a report opened while dark mode is on must
+     still come out as black text on white paper, not a black page. */
+  :root, .dark { color-scheme: light; }
+  .dark body, .dark #root { background: #fff !important; color: #0f172a !important; }
+  .dark .bg-white, .dark .bg-\[\#F8FAFC\] { background-color: #fff !important; }
+  .dark .bg-gray-50 { background-color: #f8fafc !important; }
+  .dark .bg-gray-100 { background-color: #f1f5f9 !important; }
+  .dark .text-gray-900, .dark .text-gray-800, .dark .text-\[\#0B1F3A\] { color: #0f172a !important; }
+  .dark .text-gray-700, .dark .text-gray-600, .dark .text-gray-500 { color: #334155 !important; }
+  .dark .text-gray-400 { color: #64748b !important; }
+  .dark .border-gray-100, .dark .border-gray-200, .dark .border-gray-50 { border-color: #e2e8f0 !important; }
+  .dark .divide-gray-100, .dark .divide-gray-50 { border-color: #e2e8f0 !important; }
+  .dark .table-frame thead th { background-color: #eef2f7 !important; color: #475569 !important; }
+  .dark .table-frame tbody td, .dark .table-frame tbody th { color: #334155 !important; border-bottom-color: #f1f5f9 !important; }
+  .dark .table-frame tbody tr:nth-child(even) { background-color: #fafbfc !important; }
+  /* Kill everything except the report */
+  aside, header, nav, .sidebar, .topbar, .breadcrumb, .no-print,
+  .report-preview-container { display: none !important; }
+
+  body { background: white !important; margin: 0 !important; padding: 0 !important; }
+  main { margin: 0 !important; padding: 0 !important; }
+
+  /* Break out of the modal — target its portal structure */
+  body > div.fixed { position: static !important; inset: auto !important; padding: 0 !important; display: block !important; background: none !important; backdrop-filter: none !important; }
+  body > div.fixed > div:first-child { display: none !important; } /* backdrop */
+  body > div.fixed > div:last-child {
+    position: static !important; max-height: none !important; overflow: visible !important;
+    border-radius: 0 !important; box-shadow: none !important; border: none !important;
+    margin: 0 !important; padding: 0 !important; width: 100% !important; max-width: none !important;
+    transform: none !important;
+  }
+  body > div.fixed > div:last-child > div:first-child { display: none !important; } /* modal header */
+  body > div.fixed > div:last-child > div:last-child {
+    overflow: visible !important; max-height: none !important; padding: 0 !important;
+  }
+
+  /* The report fills the page */
+  .report-document {
+    position: static !important; width: 100% !important; max-width: none !important;
+    border: none !important; box-shadow: none !important; border-radius: 0 !important;
+    margin: 0 !important;
+  }
+
+  .report-header {
+    -webkit-print-color-adjust: exact; print-color-adjust: exact;
+    background: #0B1F3A !important;
+  }
+
+  .report-page-break { page-break-inside: avoid; }
+  .report-section-title { page-break-after: avoid; }
+  .report-footer { page-break-inside: avoid; }
+
+  table { page-break-inside: auto; width: 100% !important; }
+  tr { page-break-inside: avoid; }
+  td, th { padding: 6px 10px !important; font-size: 11px !important; }
+
+  @page { margin: 1cm; size: A4; }
+}
