@@ -8,7 +8,7 @@ import { ApiError, setCsrfToken } from '../services/http';
 import { useAuth } from '../hooks/AuthContext';
 import { useScopedCss } from '../hooks/useScopedCss';
 import { ArchonAlert } from '../utils/alerts';
-import loginCss from '../../../css/login.css?inline';
+import loginCss from '../styles/login.css?inline';
 import loginPageCss from '../styles/login-page.css?inline';
 
 type Stage = 'credentials' | 'verify';

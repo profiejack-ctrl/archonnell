@@ -213,12 +213,37 @@ type Msg = { message: string };
 
 /** Time & Attendance, Shift & Schedule, and the employee's own attendance. */
 export const attendanceService = {
-    page: (from: string, to: string) => api.get<TimeAttendancePage>('page_time_attendance', { from, to }),
+    page: async (from: string, to: string): Promise<TimeAttendancePage> => {
+        const res = await api.get<any>('page_time_attendance', { from, to });
+        return {
+            from,
+            to,
+            today: res?.today || new Date().toISOString().slice(0, 10),
+            rows: res?.rows || (Array.isArray(res?.data) ? res.data : []),
+            departments: res?.departments || [],
+            positions: res?.positions || [],
+            shifts: res?.shifts || [],
+            can_report: res?.can_report ?? true,
+        };
+    },
     monthlyReport: (year: number, month: number, department: string, employeeId: string) =>
         api.get<{ rows: MonthlyReportRow[] }>('attendance_monthly_report', { year, month, department, employee_id: employeeId }),
     saveRecord: (f: AttendanceForm) => api.post<Msg & { row: AttendanceDay }>('save_attendance', { ...f }),
 
-    schedulePage: (year: number) => api.get<ShiftSchedulePage>('page_shift_schedule', { year }),
+    schedulePage: async (year: number): Promise<ShiftSchedulePage> => {
+        const res = await api.get<any>('page_shift_schedule', { year });
+        return {
+            today: res?.today || new Date().toISOString().slice(0, 10),
+            shifts: res?.shifts || (Array.isArray(res?.data) ? res.data : []),
+            schedules: res?.schedules || [],
+            employees: res?.employees || [],
+            departments: res?.departments || [],
+            positions: res?.positions || [],
+            holidays: res?.holidays || [],
+            shift_types: res?.shift_types || ['Day Shift', 'Mid Shift', 'Night Shift', 'Rotating Shift'],
+            holiday_types: res?.holiday_types || ['Regular Holiday', 'Special Non-Working Day'],
+        };
+    },
     scheduleDays: (from: string, to: string, employeeId = '') =>
         api.get<{ from: string; to: string; days: ScheduleDay[] }>('schedule_days', { from, to, employee_id: employeeId }),
     saveShift: (f: ShiftForm) => api.post<Msg & { shift: Shift }>('save_shift', { ...f }),

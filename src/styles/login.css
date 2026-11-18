@@ -1,0 +1,281 @@
+/* Login page styles — reuses the design tokens (colors, radii, shadows) defined in styles.css */
+
+.login-wrapper {
+    min-height: 100vh;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: var(--bg-secondary);
+    padding: 1.5rem;
+}
+
+.login-card {
+    background: var(--bg-primary);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    box-shadow: var(--shadow-lg);
+    width: 100%;
+    max-width: 420px;
+    padding: 2.5rem 2rem;
+}
+
+.login-header {
+    text-align: center;
+    margin-bottom: 2rem;
+}
+
+.login-header .logo-icon {
+    margin: 0 auto 1rem auto;
+    width: 64px;
+    height: 64px;
+}
+
+.login-title {
+    font-size: 1.5rem;
+    font-weight: 700;
+    color: var(--text-primary);
+    margin-top: 0.5rem;
+}
+
+.login-subtitle {
+    font-size: 0.875rem;
+    color: var(--text-secondary);
+}
+
+.form-group {
+    margin-bottom: 1.25rem;
+}
+
+.form-label {
+    display: block;
+    font-size: 0.875rem;
+    font-weight: 500;
+    color: var(--text-primary);
+    margin-bottom: 0.5rem;
+}
+
+.input-group {
+    position: relative;
+    display: flex;
+    align-items: center;
+}
+
+.input-group > i:first-child {
+    position: absolute;
+    left: 0.875rem;
+    color: var(--text-muted);
+    font-size: 1.1rem;
+    pointer-events: none;
+}
+
+.form-control {
+    width: 100%;
+    padding: 0.75rem 2.75rem 0.75rem 2.5rem;
+    font-size: 0.95rem;
+    color: var(--text-primary);
+    background: var(--bg-primary);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md);
+    outline: none;
+    transition: var(--transition);
+}
+
+.form-control:focus {
+    border-color: var(--accent);
+    box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.15);
+}
+
+.toggle-password {
+    position: absolute;
+    right: 0.5rem;
+    background: none;
+    border: none;
+    cursor: pointer;
+    color: var(--text-muted);
+    font-size: 1.15rem;
+    padding: 0.4rem;
+    display: flex;
+    align-items: center;
+    border-radius: var(--radius-sm);
+    transition: var(--transition);
+}
+
+.toggle-password:hover {
+    color: var(--text-primary);
+    background: var(--bg-secondary);
+}
+
+.alert-error,
+.alert-success {
+    padding: 0.75rem 1rem;
+    border-radius: var(--radius-md);
+    font-size: 0.875rem;
+    margin-bottom: 1.25rem;
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+}
+
+.alert-error {
+    background-color: #fef2f2;
+    border: 1px solid #fecaca;
+    color: #dc2626;
+}
+
+.alert-success {
+    background-color: #f0fdf4;
+    border: 1px solid #bbf7d0;
+    color: #16a34a;
+}
+
+.btn-submit {
+    width: 100%;
+    padding: 0.75rem;
+    font-size: 1rem;
+    font-weight: 600;
+    color: #ffffff;
+    background: linear-gradient(135deg, #1e3a5f, #2563eb);
+    border: none;
+    border-radius: var(--radius-md);
+    cursor: pointer;
+    transition: var(--transition);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.6rem;
+}
+
+.btn-submit:hover {
+    opacity: 0.95;
+    box-shadow: var(--shadow-md);
+}
+
+.btn-submit:disabled {
+    opacity: 0.75;
+    cursor: not-allowed;
+}
+
+.btn-spinner {
+    display: none;
+    width: 16px;
+    height: 16px;
+    border: 2px solid rgba(255, 255, 255, 0.4);
+    border-top-color: #ffffff;
+    border-radius: 50%;
+    animation: login-spin 0.7s linear infinite;
+}
+
+.btn-submit.is-loading .btn-spinner {
+    display: inline-block;
+}
+
+.btn-submit.is-loading .btn-text {
+    opacity: 0.85;
+}
+
+@keyframes login-spin {
+    to { transform: rotate(360deg); }
+}
+
+.login-footer-note {
+    margin-top: 1.75rem;
+    text-align: center;
+    font-size: 0.75rem;
+    color: var(--text-muted);
+}
+
+.verify-actions {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 0.75rem;
+    margin-top: 1rem;
+    width: 100%;
+}
+
+.btn-verify-action {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.5rem;
+    padding: 0.7rem 0.85rem;
+    min-height: 44px;
+    border-radius: var(--radius-md);
+    font-size: 0.875rem;
+    font-weight: 600;
+    font-family: inherit;
+    cursor: pointer;
+    text-align: center;
+    text-decoration: none;
+    transition: var(--transition);
+    border: none;
+    line-height: 1.25;
+    box-sizing: border-box;
+    width: 100%;
+    letter-spacing: 0.01em;
+}
+
+.btn-verify-action i {
+    font-size: 1.1rem;
+    flex-shrink: 0;
+}
+
+/* "Use a different account" - Sleek Slate/Navy gradient */
+.btn-verify-cancel,
+.btn-verify-secondary {
+    background: linear-gradient(135deg, #475569, #334155);
+    color: #ffffff;
+    box-shadow: 0 2px 6px rgba(51, 65, 85, 0.25);
+}
+
+.btn-verify-cancel:hover,
+.btn-verify-secondary:hover {
+    background: linear-gradient(135deg, #334155, #1e293b);
+    color: #ffffff;
+    transform: translateY(-1px);
+    box-shadow: 0 4px 12px rgba(30, 41, 59, 0.35);
+}
+
+.btn-verify-cancel:active,
+.btn-verify-secondary:active {
+    transform: translateY(0);
+    box-shadow: 0 1px 3px rgba(30, 41, 59, 0.2);
+}
+
+/* "Resend code" - Royal Blue gradient matching primary button */
+.btn-verify-resend,
+.btn-verify-primary {
+    background: linear-gradient(135deg, #2563eb, #1d4ed8);
+    color: #ffffff;
+    box-shadow: 0 2px 6px rgba(37, 99, 235, 0.25);
+}
+
+.btn-verify-resend:hover,
+.btn-verify-primary:hover {
+    background: linear-gradient(135deg, #1d4ed8, #1e40af);
+    color: #ffffff;
+    transform: translateY(-1px);
+    box-shadow: 0 4px 12px rgba(37, 99, 235, 0.35);
+}
+
+.btn-verify-resend:active,
+.btn-verify-primary:active {
+    transform: translateY(0);
+    box-shadow: 0 1px 3px rgba(37, 99, 235, 0.2);
+}
+
+@media (max-width: 480px) {
+    .login-card {
+        padding: 2rem 1.25rem;
+    }
+    .verify-actions {
+        grid-template-columns: 1fr;
+        gap: 0.625rem;
+    }
+}
+
+
+
+/* Touch: a comfortable tap area for the show/hide password button (look unchanged) */
+@media (pointer: coarse), (max-width: 1024px) {
+    .toggle-password { min-width: 44px; min-height: 44px; }
+}

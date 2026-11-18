@@ -1,0 +1,470 @@
+/* =========================================================
+   TABLET
+========================================================= */
+
+@media (max-width: 980px) {
+
+    .nav {
+        gap: 20px;
+    }
+
+    .cards,
+    .project-grid {
+        grid-template-columns: repeat(2, 1fr);
+    }
+
+    .product-grid {
+        grid-template-columns: repeat(2, 1fr);
+    }
+
+    .footer-grid {
+        grid-template-columns: repeat(2, 1fr);
+    }
+
+    .careers {
+        padding: 80px 0;
+    }
+
+    .shape-top-left {
+        width: 200px;
+        height: 200px;
+    }
+
+    .shape-top-right {
+        width: 240px;
+        height: 240px;
+    }
+
+    .shape-bottom-right {
+        width: 220px;
+        height: 220px;
+    }
+
+    .shape-bottom-left {
+        width: 180px;
+        height: 180px;
+    }
+
+    .careers-we-are {
+        font-size: 56px;
+    }
+
+    .careers-hiring {
+        font-size: 85px;
+    }
+
+    .careers-subheading h3 {
+        font-size: 24px;
+    }
+
+    .careers-positions li {
+        font-size: 17px;
+    }
+
+}
+
+
+/* =========================================================
+   HEADER - narrower laptops and tablets
+   Tighter link spacing first; below 1060px the header uses the
+   mobile menu (toggle + drop-down), the same as on phones.
+========================================================= */
+
+@media (max-width: 1180px) {
+
+    .nav-main {
+        gap: 24px;
+    }
+
+}
+
+@media (max-width: 1060px) {
+
+    .nav-container {
+        display: flex;
+    }
+
+    .mobile-toggle {
+        display: block;
+    }
+
+    .nav {
+        display: none;
+
+        position: absolute;
+
+        top: 100%;
+        left: 0;
+        right: 0;
+
+        padding: 15px 5%;
+
+        background: #ffffff;
+
+        flex-direction: column;
+
+        align-items: stretch;
+
+        gap: 0;
+
+        box-shadow:
+            0 12px 20px rgba(0,0,0,0.08);
+    }
+
+    .nav.open {
+        display: flex;
+    }
+
+    .nav-main,
+    .nav-actions {
+        flex-direction: column;
+
+        align-items: stretch;
+
+        gap: 0;
+    }
+
+    .nav a {
+        padding: 13px 0;
+
+        border-bottom:
+            1px solid #edf1f3;
+    }
+
+    .employee-btn {
+        text-align: center;
+
+        margin-top: 10px;
+    }
+
+}
+
+
+/* =========================================================
+   MOBILE
+========================================================= */
+
+@media (max-width: 760px) {
+
+    .header {
+        height: 72px;
+    }
+
+    .logo-symbol {
+        width: 45px;
+        height: 45px;
+        font-size: 34px;
+    }
+
+    .logo-text strong {
+        font-size: 13px;
+    }
+
+    .mobile-toggle {
+        display: block;
+    }
+
+    .nav {
+        display: none;
+
+        position: absolute;
+
+        top: 72px;
+        left: 0;
+        right: 0;
+
+        padding: 15px 5%;
+
+        background: #ffffff;
+
+        flex-direction: column;
+
+        align-items: stretch;
+
+        gap: 0;
+
+        box-shadow:
+            0 12px 20px rgba(0,0,0,0.08);
+    }
+
+    .nav.open {
+        display: flex;
+    }
+
+    .nav a {
+        padding: 13px 0;
+
+        border-bottom:
+            1px solid #edf1f3;
+    }
+
+    .employee-btn {
+        text-align: center;
+
+        margin-top: 10px;
+    }
+
+
+    /* HERO */
+
+    .hero {
+        height: 550px;
+    }
+
+    .hero h1 {
+        font-size: 43px;
+    }
+
+    .hero p {
+        font-size: 15px;
+    }
+
+    .hero-buttons {
+        flex-direction: column;
+
+        align-items: flex-start;
+    }
+
+
+    /* ABOUT */
+
+    .about-grid {
+        grid-template-columns: 1fr;
+
+        gap: 40px;
+    }
+
+    .about-image {
+        min-height: 280px;
+    }
+
+
+    /* SERVICES */
+
+    .cards {
+        grid-template-columns: 1fr;
+    }
+
+
+    /* PROJECTS */
+
+    .project-grid {
+        grid-template-columns: 1fr;
+    }
+
+    .project {
+        height: 300px;
+    }
+
+
+    /* PRODUCTS */
+
+    .product-grid {
+        grid-template-columns: 1fr;
+    }
+
+
+    /* CTA */
+
+    .cta-content {
+        flex-direction: column;
+
+        align-items: flex-start;
+    }
+
+
+    /* FOOTER */
+
+    .footer-grid {
+        grid-template-columns: 1fr;
+
+        gap: 30px;
+    }
+
+
+    /* CAREERS */
+
+    .careers {
+        padding: 70px 0;
+    }
+
+    .shape-top-left {
+        width: 150px;
+        height: 150px;
+    }
+
+    .shape-top-right {
+        width: 170px;
+        height: 170px;
+    }
+
+    .shape-bottom-right {
+        width: 160px;
+        height: 160px;
+    }
+
+    .shape-bottom-left {
+        width: 130px;
+        height: 130px;
+    }
+
+    .careers-we-are {
+        font-size: 46px;
+    }
+
+    .careers-hiring {
+        font-size: 65px;
+    }
+
+    .careers-hiring-bar {
+        left: -6px;
+        right: -6px;
+    }
+
+    .careers-subheading h3 {
+        font-size: 21px;
+    }
+
+    .careers-positions li {
+        font-size: 15px;
+        padding-left: 24px;
+        margin-bottom: 10px;
+    }
+
+    .careers-positions li::before {
+        left: 4px;
+        top: 9px;
+        width: 8px;
+        height: 8px;
+    }
+
+    .btn-apply {
+        width: 100%;
+        padding: 16px 28px;
+        font-size: 15px;
+    }
+
+}
+
+
+/* =========================================================
+   SMALL MOBILE
+========================================================= */
+
+@media (max-width: 420px) {
+
+    .container {
+        width: 88%;
+    }
+
+    .hero h1 {
+        font-size: 37px;
+    }
+
+    .section-title {
+        font-size: 29px;
+    }
+
+    .about-content h2 {
+        font-size: 29px;
+    }
+
+    .stats {
+        flex-wrap: wrap;
+
+        gap: 20px;
+    }
+
+    .btn {
+        width: 100%;
+    }
+
+
+    /* CAREERS */
+
+    .careers {
+        padding: 60px 0;
+    }
+
+    .shape-top-left {
+        width: 110px;
+        height: 110px;
+    }
+
+    .shape-top-right {
+        width: 130px;
+        height: 130px;
+    }
+
+    .shape-bottom-right {
+        width: 120px;
+        height: 120px;
+    }
+
+    .shape-bottom-left {
+        width: 100px;
+        height: 100px;
+    }
+
+    .careers-label {
+        font-size: 9px;
+        letter-spacing: 2.5px;
+    }
+
+    .careers-we-are {
+        font-size: 38px;
+    }
+
+    .careers-hiring {
+        font-size: 52px;
+    }
+
+    .careers-subheading h3 {
+        font-size: 18px;
+    }
+
+    .careers-positions li {
+        font-size: 14px;
+    }
+
+    .careers-link-text {
+        font-size: 11px;
+    }
+
+}
+
+/* =========================================================
+   READABILITY + TOUCH (phones & tablets)
+   - micro-labels were 9-10px; keep their look, make them legible
+   - hero slider dots keep their look but get a proper tap area
+========================================================= */
+
+@media (max-width: 1024px) {
+
+    .section-label,
+    .careers-label,
+    .project-content small,
+    .partner,
+    .footer-column a,
+    .copyright,
+    .score-text .label,
+    .summary-label,
+    .step-label,
+    .footer-column p {
+        font-size: 12px;
+    }
+
+    .slider-dot {
+        position: relative;
+    }
+
+    .slider-dot::after {
+        content: "";
+        position: absolute;
+        inset: -14px -6px;
+    }
+
+    .slider-dots {
+        gap: 14px;
+    }
+}

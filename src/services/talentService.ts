@@ -64,11 +64,38 @@ export interface ApplicantHistory {
 
 type Msg = { message: string };
 
+export const REJECTION_CATEGORIES = [
+    'Does not meet qualifications', 'Insufficient work experience', 'Skills do not match the position', 'Failed initial screening',
+    'Failed interview', 'Failed assessment', 'Position filled', 'Position requirements changed', 'Applicant withdrew', 'Other',
+];
+
+export const HR_FEEDBACK_FIELDS: [string, string][] = [
+    ['interview_feedback', 'Interview Feedback'], ['skills_assessment', 'Skills Assessment'], ['strengths', 'Strengths'],
+    ['improvements', 'Areas for Improvement'], ['recruiter_notes', 'Recruiter Notes'], ['decision_notes', 'Hiring Decision Notes'], ['remarks', 'Additional Remarks'],
+];
+
 /** Rejected Applicants, Talent Pool, Future Opportunities, Feedback, Archived Applicants. */
 export const talentService = {
-    rejectedPage: () => api.get<{ applicants: TalentRow[]; categories: string[] }>('page_rejected_applicants'),
-    archivedPage: () => api.get<{ applicants: TalentRow[] }>('page_archived_applicants'),
-    poolPage: () => api.get<{ applicants: TalentRow[]; postings: PostingOption[] }>('page_talent_pool'),
+    rejectedPage: async (): Promise<{ applicants: TalentRow[]; categories: string[] }> => {
+        const res = await api.get<any>('page_rejected_applicants');
+        return {
+            applicants: res?.applicants || (Array.isArray(res?.data) ? res.data : []),
+            categories: res?.categories || REJECTION_CATEGORIES,
+        };
+    },
+    archivedPage: async (): Promise<{ applicants: TalentRow[] }> => {
+        const res = await api.get<any>('page_archived_applicants');
+        return {
+            applicants: res?.applicants || (Array.isArray(res?.data) ? res.data : []),
+        };
+    },
+    poolPage: async (): Promise<{ applicants: TalentRow[]; postings: PostingOption[] }> => {
+        const res = await api.get<any>('page_talent_pool');
+        return {
+            applicants: res?.applicants || (Array.isArray(res?.data) ? res.data : []),
+            postings: res?.postings || [],
+        };
+    },
     matches: (postingId: number) => api.get<{ posting: PostingOption & { position: string }; candidates: TalentMatch[] }>('talent_pool_matches', { job_posting_id: postingId }),
     history: (id: number) => api.get<ApplicantHistory>('applicant_history', { id }),
     addHrFeedback: (id: number, fields: Record<string, string>) => api.post<Msg>('add_hr_feedback', { applicant_id: id, ...fields }),
@@ -79,16 +106,6 @@ export const talentService = {
     contact: (id: number, postingId: number, message: string) => api.post<Msg>('contact_talent', { applicant_id: id, job_posting_id: postingId, message }),
     withdrawOpportunity: (id: number) => api.post<Msg>('withdraw_opportunity', { id }),
 };
-
-export const REJECTION_CATEGORIES = [
-    'Does not meet qualifications', 'Insufficient work experience', 'Skills do not match the position', 'Failed initial screening',
-    'Failed interview', 'Failed assessment', 'Position filled', 'Position requirements changed', 'Applicant withdrew', 'Other',
-];
-
-export const HR_FEEDBACK_FIELDS: [string, string][] = [
-    ['interview_feedback', 'Interview Feedback'], ['skills_assessment', 'Skills Assessment'], ['strengths', 'Strengths'],
-    ['improvements', 'Areas for Improvement'], ['recruiter_notes', 'Recruiter Notes'], ['decision_notes', 'Hiring Decision Notes'], ['remarks', 'Additional Remarks'],
-];
 
 /** Badge colour of an application status shown in these lists. */
 export function talentBadge(status: string): string {

@@ -115,7 +115,19 @@ type Msg = { message: string };
 
 /** Leave Management (HR) and the employee's own leave requests. */
 export const leaveService = {
-    page: (year: number) => api.get<LeaveManagementPage>('page_leave_management', { year }),
+    page: async (year: number): Promise<LeaveManagementPage> => {
+        const res = await api.get<any>('page_leave_management', { year });
+        return {
+            year,
+            today: res?.today || new Date().toISOString().slice(0, 10),
+            requests: res?.requests || (Array.isArray(res?.data) ? res.data : []),
+            types: res?.types || [],
+            balances: res?.balances || [],
+            employees: res?.employees || [],
+            departments: res?.departments || [],
+            my_employee_id: res?.my_employee_id ?? null,
+        };
+    },
     detail: (id: number) => api.get<{ request: LeaveRequest; history: LeaveHistoryEntry[] }>('leave_request_detail', { id }),
     approve: (id: number) => api.post<Msg>('review_leave_request', { id, decision: 'approve' }),
     reject: (id: number, reason: string) => api.post<Msg>('review_leave_request', { id, decision: 'reject', reason }),

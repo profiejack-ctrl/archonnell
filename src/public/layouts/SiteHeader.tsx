@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Link, useLocation } from 'react-router-dom';
-import logo from '../../../../Homepage/assets/img/LOGO.png';
+import logo from '../../assets/Homepage/assets/img/LOGO.png';
 import { backendUrl } from '../../services/http';
 
 /** HRMS login - the Employee Portal reuses the system's own login page. */

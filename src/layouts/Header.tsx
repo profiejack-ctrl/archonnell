@@ -5,7 +5,7 @@ import Icon from '../components/Icon';
 import NotificationBell from './NotificationBell';
 import { useAuth } from '../hooks/AuthContext';
 import { headerDateTime, initials } from '../utils/format';
-import logoUrl from '../../../img/LOGO.png';
+import logoUrl from '../assets/img/LOGO.png';
 
 interface HeaderProps {
     timer: string;

@@ -6,9 +6,9 @@ import { installChunkReloadHandler } from './utils/chunkReload';
 // Icon adapter first, so the system stylesheets win wherever they style icons.
 import './styles/icons.css';
 // The system's own stylesheets, shared with the PHP pages (single source of truth).
-import '../../styles.css';
-import '../../css/system-responsive.css';
-import '../../css/archon-alerts.css';
+import './styles/styles.css';
+import './styles/system-responsive.css';
+import './styles/archon-alerts.css';
 import './styles/app.css';
 
 // Legacy deep links used index.php#<page>; the router expects #/<page>.

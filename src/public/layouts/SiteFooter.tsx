@@ -1,5 +1,5 @@
 import { Link } from 'react-router-dom';
-import logo from '../../../../Homepage/assets/img/LOGO.png';
+import logo from '../../assets/Homepage/assets/img/LOGO.png';
 
 /** Site footer (includes/public_footer.php; variant="applicant" = includes/footer.php). */
 export default function SiteFooter({ variant }: { variant: 'public' | 'applicant' }) {

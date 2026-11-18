@@ -23,5 +23,23 @@ export interface DashboardData {
 }
 
 export const dashboardService = {
-    page: () => api.get<DashboardData>('page_dashboard'),
+    page: async (): Promise<DashboardData> => {
+        const res = await api.get<any>('page_dashboard');
+        if (res) {
+            if (res.stats) {
+                res.stats.applicants = res.stats.applicants ?? res.stats.active_applicants ?? 0;
+                res.stats.employees = res.stats.employees ?? res.stats.total_employees ?? 0;
+                res.stats.onboarding = res.stats.onboarding ?? 0;
+            }
+            if (Array.isArray(res.recruitment_trend)) {
+                const items = res.recruitment_trend.map((t: any) => ({
+                    label: t.label || t.month || '',
+                    count: t.count ?? t.applicants ?? 0,
+                }));
+                const max = Math.max(1, ...items.map((i: any) => i.count));
+                res.recruitment_trend = { items, max };
+            }
+        }
+        return res as DashboardData;
+    },
 };

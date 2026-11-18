@@ -8,9 +8,9 @@
  */
 
 /** Centralized Backend API Gateway URL for HRMS */
-export const API_BASE: string = (import.meta.env.VITE_API_URL as string | undefined) || 'http://localhost:4000/api/v1/hrms';
-export const AUTH_BASE: string = (import.meta.env.VITE_AUTH_URL as string | undefined) || 'http://localhost:4000/api/v1/auth';
-export const GATEWAY_BASE: string = (import.meta.env.VITE_GATEWAY_URL as string | undefined) || 'http://localhost:4000';
+export const API_BASE: string = (import.meta.env.VITE_API_URL as string | undefined) || '/api/v1/hrms';
+export const AUTH_BASE: string = (import.meta.env.VITE_AUTH_URL as string | undefined) || '/api/v1/auth';
+export const GATEWAY_BASE: string = (import.meta.env.VITE_GATEWAY_URL as string | undefined) || 'https://api.archonnellincorporated.com';
 
 /** URL of a backend file or stored upload (e.g. "uploads/announcements/x.jpg"). */
 export function backendUrl(path: string): string {
@@ -58,7 +58,7 @@ async function parse<T>(response: Response, notify401: boolean): Promise<T> {
         throw new ApiError(`Server returned invalid response (${response.status} ${response.statusText || 'Error'})`, response.status);
     }
     if (!response.ok || (data.success !== undefined && !data.success)) {
-        throw new ApiError(String(data.message || 'Request failed'), response.status, data);
+        throw new ApiError(String(data.message || (data.error as { message?: string })?.message || 'Request failed'), response.status, data);
     }
     return data as T;
 }

@@ -28,7 +28,17 @@ type Result = { request: VacancyRequest; message: string };
 
 /** Department Vacancy Request -> Super Admin approval -> Recruitment job posting. */
 export const vacancyRequestService = {
-    page: () => api.get<VacancyRequestsPage>('page_vacancy_requests'),
+    page: async (): Promise<VacancyRequestsPage> => {
+        const res = await api.get<any>('page_vacancy_requests');
+        return {
+            requests: res?.requests || (Array.isArray(res?.data) ? res.data : []),
+            manager: res?.manager || null,
+            is_admin: res?.is_admin ?? true,
+            can_recruit: res?.can_recruit ?? true,
+            positions: res?.positions || [],
+            employment_types: res?.employment_types || ['Full-Time', 'Part-Time', 'Contract', 'Probationary'],
+        };
+    },
     create: (form: VacancyRequestForm) => api.post<Result>('create_vacancy_request', { ...form }),
     approve: (id: number) => api.post<Result>('review_vacancy_request', { id, decision: 'approve' }),
     reject: (id: number, reason: string) => api.post<Result>('review_vacancy_request', { id, decision: 'reject', reason }),

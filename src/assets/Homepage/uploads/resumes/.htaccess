@@ -1,0 +1,3 @@
+# Resumes contain applicant PII: never served directly over HTTP.
+# HR/Admin access goes through /download-resume.php (login + permission checked).
+Require all denied

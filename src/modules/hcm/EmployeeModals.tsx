@@ -28,23 +28,29 @@ export interface EmployeeView {
     jobPosting: string;
 }
 
-export function toEmployeeView(e: Employee): EmployeeView {
+export function toEmployeeView(e: Employee | any): EmployeeView {
+    const name = e.full_name || [e.first_name, e.last_name].filter(Boolean).join(' ') || '';
+    const phone = e.mobile_number || e.phone || '';
+    const joinDate = e.date_hired || e.hire_date || '';
+    const dob = e.date_of_birth || e.birth_date || '';
+    const department = e.department || e.department_name || '';
+    const position = e.position || e.position_title || '';
     return {
-        dbId: e.id,
-        employeeNo: e.employee_no,
-        name: e.full_name,
-        position: e.position,
-        department: e.department,
-        status: e.employment_status,
+        dbId: typeof e.id === 'number' ? e.id : (parseInt(String(e.id), 10) || 0),
+        employeeNo: e.employee_no || '',
+        name,
+        position,
+        department,
+        status: e.employment_status || 'Active',
         email: e.email ?? '',
-        phone: e.mobile_number ?? '',
+        phone,
         address: e.address ?? '',
-        joinDate: e.date_hired ?? '',
-        dob: e.date_of_birth ?? '',
+        joinDate,
+        dob,
         gender: e.gender ?? '',
         contract: e.contract_type ?? 'Full-time',
         applicationNo: e.application_no ?? '',
-        appliedAt: e.applied_at ? e.applied_at.slice(0, 10) : '',
+        appliedAt: e.applied_at ? String(e.applied_at).slice(0, 10) : '',
         jobPosting: [e.job_posting_no, e.job_posting_title].filter(Boolean).join(' · '),
     };
 }

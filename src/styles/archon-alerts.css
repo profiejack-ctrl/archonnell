@@ -1,0 +1,146 @@
+/*
+ * SweetAlert2 theme for Archon Nell.
+ * Uses the system's own design tokens (styles.css) with fallbacks so it also
+ * looks right on the login page and the public portal, which define their own.
+ */
+.swal2-container {
+    z-index: 5000 !important; /* above the app's modal overlays (z-index 2000) */
+    font-family: 'Inter', 'Roboto', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+}
+
+.swal2-popup.archon-swal {
+    width: 30rem;
+    max-width: 92vw;
+    padding: 1.75rem 1.5rem 1.5rem;
+    border-radius: var(--radius-lg, 0.75rem);
+    background: var(--bg-primary, #ffffff);
+    color: var(--text-primary, #1f2937);
+    border: 1px solid var(--border, #e5e7eb);
+    box-shadow: var(--shadow-lg, 0 10px 15px -3px rgba(0, 0, 0, 0.08), 0 4px 6px -2px rgba(0, 0, 0, 0.06));
+    font-family: inherit;
+}
+
+.archon-swal .swal2-title {
+    padding: 0.5rem 0 0;
+    font-size: 1.25rem;
+    font-weight: 700;
+    color: var(--text-primary, #1f2937);
+}
+
+.archon-swal .swal2-html-container {
+    margin: 0.75rem 0 0;
+    padding: 0;
+    font-size: 0.925rem;
+    line-height: 1.55;
+    color: var(--text-secondary, #4b5563);
+    white-space: pre-line; /* keep the "\n" line breaks of existing messages */
+    overflow-wrap: anywhere;
+}
+
+.archon-swal .swal2-html-container p { margin: 0 0 0.6rem; }
+.archon-swal .swal2-html-container p:last-child { margin-bottom: 0; }
+
+.archon-swal .archon-swal-detail {
+    margin: 0.75rem 0 0;
+    padding: 0.75rem 1rem;
+    text-align: left;
+    background: var(--bg-secondary, #f3f4f6);
+    border-radius: var(--radius-md, 0.5rem);
+    white-space: normal;
+}
+.archon-swal .archon-swal-detail span {
+    display: block;
+    font-size: 0.75rem;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+    color: var(--text-muted, #9ca3af);
+}
+.archon-swal .archon-swal-detail strong { color: var(--text-primary, #1f2937); }
+
+.archon-swal .swal2-actions { margin: 1.5rem 0 0; gap: 0.75rem; }
+
+.archon-swal-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.5rem;
+    min-width: 6.5rem;
+    padding: 0.625rem 1.25rem;
+    border: 1px solid transparent;
+    border-radius: var(--radius-md, 0.5rem);
+    font-family: inherit;
+    font-size: 0.875rem;
+    font-weight: 500;
+    cursor: pointer;
+    transition: var(--transition, all 0.2s ease);
+}
+.archon-swal-btn:focus-visible { outline: 2px solid var(--accent, #2563eb); outline-offset: 2px; }
+
+.archon-swal-btn--primary { background: var(--accent, #2563eb); color: #ffffff; }
+.archon-swal-btn--primary:hover { opacity: 0.9; box-shadow: 0 4px 12px rgba(37, 99, 235, 0.25); }
+
+.archon-swal-btn--danger { background: var(--danger, #ef4444); color: #ffffff; }
+.archon-swal-btn--danger:hover { opacity: 0.9; box-shadow: 0 4px 12px rgba(239, 68, 68, 0.25); }
+
+.archon-swal-btn--secondary {
+    background: transparent;
+    color: var(--text-secondary, #4b5563);
+    border-color: var(--border, #e5e7eb);
+}
+.archon-swal-btn--secondary:hover { background: var(--bg-secondary, #f3f4f6); }
+
+/* Text asked for in an alert (e.g. Reason for Rejection): the page font, not the browser default. */
+.archon-swal .swal2-textarea {
+    font-family: inherit;
+    font-size: 0.95rem;
+    line-height: 1.5;
+    border-radius: 8px;
+}
+.archon-swal .swal2-input-label { font-weight: 600; font-size: 0.9rem; }
+
+.archon-swal .swal2-timer-progress-bar { background: var(--accent, #2563eb); opacity: 0.35; }
+
+/* Icon colours follow the system's status palette */
+.archon-swal .swal2-icon.swal2-success { border-color: var(--success, #10b981); color: var(--success, #10b981); }
+.archon-swal .swal2-icon.swal2-success [class^='swal2-success-line'] { background-color: var(--success, #10b981); }
+.archon-swal .swal2-icon.swal2-success .swal2-success-ring { border-color: rgba(16, 185, 129, 0.3); }
+.archon-swal .swal2-icon.swal2-error { border-color: var(--danger, #ef4444); color: var(--danger, #ef4444); }
+.archon-swal .swal2-icon.swal2-error [class^='swal2-x-mark-line'] { background-color: var(--danger, #ef4444); }
+.archon-swal .swal2-icon.swal2-warning { border-color: var(--warning, #f59e0b); color: var(--warning, #f59e0b); }
+.archon-swal .swal2-icon.swal2-info { border-color: var(--info, #3b82f6); color: var(--info, #3b82f6); }
+.archon-swal .swal2-icon.swal2-question { border-color: var(--accent, #2563eb); color: var(--accent, #2563eb); }
+
+/* ---------------------------------------------------------------
+ * Small screens: the dialog always fits the viewport (scrolls inside
+ * itself if tall), buttons stay reachable and can wrap.
+ * ------------------------------------------------------------- */
+.swal2-container { padding: 0.75rem; }
+.swal2-popup.archon-swal {
+    width: min(30rem, calc(100vw - 1.5rem));
+    max-width: calc(100vw - 1.5rem);
+    max-height: calc(100vh - 1.5rem);
+    max-height: calc(100dvh - 1.5rem);
+    overflow-y: auto;
+    box-sizing: border-box;
+}
+.archon-swal .swal2-html-container { max-width: 100%; }
+.archon-swal .swal2-actions { flex-wrap: wrap; }
+
+@media (max-width: 480px) {
+    .swal2-popup.archon-swal { padding: 1.25rem 1rem 1rem; }
+    .archon-swal .swal2-title { font-size: 1.1rem; }
+    .archon-swal .swal2-actions { width: 100%; margin-top: 1.1rem; }
+    .archon-swal .swal2-actions .archon-swal-btn { flex: 1 1 auto; min-height: 44px; }
+}
+@media (max-height: 500px) {
+    .swal2-popup.archon-swal { padding: 0.9rem 1rem 0.9rem; }
+    .archon-swal .swal2-icon { width: 3.5em; height: 3.5em; margin: 0.25rem auto 0.25rem; }
+    .archon-swal .swal2-icon .swal2-icon-content { font-size: 2.4em; }
+    .archon-swal .swal2-html-container { margin-top: 0.4rem; }
+    .archon-swal .swal2-actions { margin-top: 0.75rem; }
+}
+
+/* Touch / tablet: dialog buttons are full-size tap targets (look unchanged) */
+@media (pointer: coarse), (max-width: 1024px) {
+    .archon-swal .swal2-actions .archon-swal-btn { min-height: 44px; }
+}
