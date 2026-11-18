@@ -3,64 +3,88 @@
         "1": {
             "id": 1,
             "vehicle_code": "TRK-101",
-            "plate_number": "NKI-8821",
-            "type": "Heavy Cargo Truck",
+            "plate_number": "CBR-5542",
+            "type": "Heavy Truck",
             "status": "Active",
             "fuel_level": 88.5
         },
         "2": {
             "id": 2,
             "vehicle_code": "TRK-102",
-            "plate_number": "WAK-4092",
-            "type": "Refrigerated Transport",
+            "plate_number": "DAL-9012",
+            "type": "Van",
             "status": "Active",
-            "fuel_level": 74
+            "fuel_level": 88.5
         },
         "3": {
             "id": 3,
             "vehicle_code": "TRK-103",
-            "plate_number": "CBD-1204",
-            "type": "Container Hauler",
+            "plate_number": "NBR-3580",
+            "type": "Truck",
             "status": "Active",
-            "fuel_level": 92
+            "fuel_level": 88.5
         },
         "4": {
             "id": 4,
             "vehicle_code": "TRK-104",
-            "plate_number": "NKL-3301",
-            "type": "Delivery Van",
+            "plate_number": "NDG-1024",
+            "type": "Truck",
+            "status": "Active",
+            "fuel_level": 88.5
+        },
+        "5": {
+            "id": 5,
+            "vehicle_code": "TRK-105",
+            "plate_number": "NEB-7892",
+            "type": "Van",
+            "status": "Active",
+            "fuel_level": 88.5
+        },
+        "6": {
+            "id": 6,
+            "vehicle_code": "TRK-106",
+            "plate_number": "NFG-8291",
+            "type": "Truck",
+            "status": "Active",
+            "fuel_level": 88.5
+        },
+        "7": {
+            "id": 7,
+            "vehicle_code": "TRK-107",
+            "plate_number": "WOT-4421",
+            "type": "Truck",
             "status": "Maintenance",
-            "fuel_level": 45
+            "fuel_level": 88.5
         }
     },
     "drivers": {
         "1": {
             "id": 1,
-            "name": "Harvey Villarin",
-            "employee_id": "DRV-1001",
-            "role": "Senior Lead Driver",
-            "score": 9.8
+            "name": "Reynaldo Bautista Jr.",
+            "employee_id": "EMP-0004",
+            "role": "Logistics Driver",
+            "score": 9.7
         },
         "2": {
             "id": 2,
-            "name": "Jhoanna Reforsado",
-            "employee_id": "DRV-1002",
-            "role": "Regional Logistics Driver",
-            "score": 9.6
+            "name": "Rolando Castillo Guzman",
+            "employee_id": "EMP-0016",
+            "role": "Logistics Driver",
+            "score": 9.7
         },
         "3": {
             "id": 3,
-            "name": "Erwin Cober",
-            "employee_id": "DRV-1003",
-            "role": "Heavy Fleet Operator",
-            "score": 9.4
+            "name": "Eduardo Manalo Pascual",
+            "employee_id": "EMP-0014",
+            "role": "Logistics Driver",
+            "score": 9.7
         },
         "4": {
             "id": 4,
-            "name": "Daniella Agus",
-            "employee_id": "DRV-1004",
-            "role": "Express Dispatcher",
-            "score": 9.2
+            "name": "Danilo Tolentino Rivera",
+            "employee_id": "EMP-0015",
+            "role": "Logistics Driver",
+            "score": 9.7
         }
     },
     "locations": {
@@ -168,5 +192,6 @@
             "severity": "info",
             "created_at": "2026-08-14 23:16:22"
         }
-    ]
+    ],
+    "routes": []
 }

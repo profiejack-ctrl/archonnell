@@ -39,6 +39,13 @@ class AuthController extends Controller
             return back()->withErrors(['email' => 'Invalid email or password.'])->onlyInput('email');
         }
 
+        if (app()->environment('local') && empty(env('BREVO_API_KEY'))) {
+            Auth::login($user);
+            $request->session()->regenerate();
+            AuditLog::record($request, 'Signed in', 'Authentication', 'Direct local development sign in.');
+            return redirect()->to($this->dashboardPath($user));
+        }
+
         if (! $this->issueTwoFactorCode($user)) {
             return back()
                 ->withErrors(['email' => 'We could not send a verification code. Please try again.'])
@@ -103,6 +110,13 @@ class AuthController extends Controller
 
         if ($user->two_factor_expires_at?->copy()->subMinutes(self::TWO_FACTOR_VALID_MINUTES - 1)->isFuture()) {
             return back()->withErrors(['code' => 'Please wait a moment before requesting a new code.']);
+        }
+
+        if (app()->environment('local') && empty(env('BREVO_API_KEY'))) {
+            Auth::login($user);
+            $request->session()->regenerate();
+            AuditLog::record($request, 'Signed in', 'Authentication', 'Direct local development sign in.');
+            return redirect()->to($this->dashboardPath($user));
         }
 
         if (! $this->issueTwoFactorCode($user)) {
