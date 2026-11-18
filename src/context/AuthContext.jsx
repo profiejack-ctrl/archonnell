@@ -9,12 +9,34 @@ const store = () => {
 
 const AuthContext = createContext(null);
 
+// The central auth service uses lowercase machine roles (for example, `superadmin`),
+// while the UI historically used display roles. Keep one canonical UI vocabulary so
+// route guards, navigation, and role-specific screens make the same decision.
+function normalizeUserRole(role) {
+  const value = String(role || '').trim().toLowerCase().replace(/[\s-]+/g, '_');
+  if (['administrator', 'admin', 'superadmin', 'super_admin', 'hr_admin', 'hr_manager'].includes(value)) {
+    return 'Administrator';
+  }
+  if (['employee', 'staff', 'worker'].includes(value)) return 'Employee';
+  return role || 'Employee';
+}
+
+function normalizeUser(user) {
+  if (!user || typeof user !== 'object') return user;
+  const role = normalizeUserRole(user.role);
+  return {
+    ...user,
+    role,
+    roleLabel: user.roleLabel || (role === 'Administrator' ? 'Administrator' : role === 'Employee' ? 'Employee' : undefined),
+  };
+}
+
 function getInitialUser() {
   try {
     const stored = store()?.getItem(STORAGE_KEY);
     if (!stored) return null;
     const parsed = JSON.parse(stored);
-    return getToken() ? { ...parsed } : null;
+    return getToken() ? normalizeUser(parsed) : null;
   } catch {
     return null;
   }
@@ -43,7 +65,7 @@ export function AuthProvider({ children }) {
   // the token can never end up out of step with each other.
   const completeSignIn = useCallback((response) => {
     // An employee's login carries a timeout (seconds of inactivity); the idle guard reads it from the user.
-    const sessionUser = { ...response.user, sessionTimeoutSeconds: response.sessionTimeoutSeconds ?? null };
+    const sessionUser = normalizeUser({ ...response.user, sessionTimeoutSeconds: response.sessionTimeoutSeconds ?? null });
     setToken(response.token);
     applyUser(sessionUser);
     setAuthError(null);
@@ -196,7 +218,7 @@ export function AuthProvider({ children }) {
         setUser((prev) => {
           if (!prev) return prev;
           // /auth/me describes the account; the idle timeout belongs to the session, so it is kept.
-          const next = { ...prev, ...response.user, sessionTimeoutSeconds: prev.sessionTimeoutSeconds ?? null };
+          const next = normalizeUser({ ...prev, ...response.user, sessionTimeoutSeconds: prev.sessionTimeoutSeconds ?? null });
           // An unchanged account must not produce a new object: every useAuth() consumer in the app
           // re-renders on it, and that is a lot of work for a value that did not move.
           if (JSON.stringify(next) === JSON.stringify(prev)) return prev;

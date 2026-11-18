@@ -246,7 +246,7 @@ export default function Dashboard() {
         (res) => { setAttendance(res); criticalDone(); },
         []
       ),
-      () => load(leaveService.getAll(), (res) => { setLeaves(res); pendingDone(); }, []),
+      () => load(leaveService.getAll(), (res) => { setLeaves(Array.isArray(res) ? res : []); pendingDone(); }, []),
     ], 0);
 
     wave([
@@ -268,10 +268,11 @@ export default function Dashboard() {
       () => load(
         overtimeService.getAll(),
         (ot) => {
-          setWaiting((w) => ({ ...w, overtime: (ot || []).filter((r) => r.status === 'Pending').length }));
+          const records = Array.isArray(ot) ? ot : [];
+          setWaiting((w) => ({ ...w, overtime: records.filter((r) => r.status === 'Pending').length }));
           pendingDone();
         },
-        () => pendingDone()
+        []
       ),
     ], 700);
 
@@ -283,16 +284,17 @@ export default function Dashboard() {
           setWaiting((w) => ({ ...w, early: Number(early && typeof early === 'object' ? early.pending ?? 0 : 0) || 0 }));
           pendingDone();
         },
-        () => pendingDone()
+        { pending: 0 }
       ),
       () => load(
         timesheetService.getAll(),
         (sheets) => {
-          setTimesheets(sheets || []);
-          setWaiting((w) => ({ ...w, timesheets: (sheets || []).filter((s) => s.status === 'Submitted').length }));
+          const records = Array.isArray(sheets) ? sheets : [];
+          setTimesheets(records);
+          setWaiting((w) => ({ ...w, timesheets: records.filter((s) => s.status === 'Submitted').length }));
           pendingDone();
         },
-        () => pendingDone()
+        []
       ),
     ], 1050);
 

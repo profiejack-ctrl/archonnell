@@ -3,7 +3,18 @@ import http from './http';
 export const employeeService = {
   getAll: async () => {
     const { data } = await http.get('/employees');
-    return data;
+    const list = Array.isArray(data) ? data : (data?.data || []);
+    return list.map(e => ({
+      ...e,
+      name: e.name || [e.first_name, e.last_name].filter(Boolean).join(' '),
+      fullName: e.fullName || [e.first_name, e.last_name].filter(Boolean).join(' '),
+      department: e.department || e.department_name || '',
+      position: e.position || e.position_title || '',
+      role: e.role || e.position_title || e.position || '',
+      status: e.status || e.employment_status || 'Active',
+      employeeId: e.employee_no || e.employeeId || e.id,
+      phone: e.phone || e.mobile_number || '',
+    }));
   },
   getById: async (id) => {
     const { data } = await http.get(`/employees/${id}`);
@@ -49,7 +60,21 @@ export const attendanceService = {
   // params: optional { from: 'YYYY-MM-DD', to: 'YYYY-MM-DD' } window.
   getAll: async (params) => {
     const { data } = await http.get('/attendance', { params });
-    return data;
+    const list = Array.isArray(data) ? data : (data?.data || []);
+    return list.map(a => ({
+      ...a,
+      date: a.date ? a.date.slice(0, 10) : a.work_date || '',
+      employeeName: a.employeeName || [a.first_name, a.last_name].filter(Boolean).join(' '),
+      employeeId: a.employee_no || a.employeeId || a.employee_id,
+      department: a.department || a.department_name,
+      position: a.position || a.position_title,
+      timeIn: a.timeIn || a.time_in || '',
+      timeOut: a.timeOut || a.time_out || '',
+      workedHours: Number(a.worked_hours ?? a.workedHours ?? 0),
+      lateMinutes: Number(a.late_minutes ?? a.lateMinutes ?? 0),
+      undertimeMinutes: Number(a.undertime_minutes ?? a.undertimeMinutes ?? 0),
+      status: a.status || 'Present',
+    }));
   },
   getById: async (id) => {
     const { data } = await http.get(`/attendance/${id}`);
@@ -314,15 +339,34 @@ export const leaveLedgerService = {
 export const shiftService = {
   getAllShifts: async () => {
     const { data } = await http.get('/shifts');
-    return data;
+    const list = Array.isArray(data) ? data : (data?.data || []);
+    return list.map(s => ({
+      ...s,
+      startTime: s.startTime || (s.start_time ? s.start_time.slice(0, 5) : '08:00'),
+      endTime: s.endTime || (s.end_time ? s.end_time.slice(0, 5) : '17:00'),
+      breakMinutes: s.breakMinutes ?? s.break_minutes ?? 60,
+    }));
   },
   getHolidays: async () => {
-    const { data } = await http.get('/shifts/holidays');
-    return data;
+    try {
+      const { data } = await http.get('/shifts/holidays');
+      return Array.isArray(data) ? data : (data?.data || []);
+    } catch {
+      return [];
+    }
   },
   getSchedules: async () => {
     const { data } = await http.get('/shifts/schedules');
-    return data;
+    const list = Array.isArray(data) ? data : (data?.data || []);
+    return list.map(s => ({
+      ...s,
+      date: s.date || (s.schedule_date ? s.schedule_date.slice(0, 10) : ''),
+      employeeId: s.employeeId || s.employee_id,
+      shiftId: s.shiftId || s.shift_id,
+      employeeName: s.employeeName || [s.first_name, s.last_name].filter(Boolean).join(' '),
+      department: s.department || s.department_name,
+      status: s.status || 'Scheduled',
+    }));
   },
   getScheduleByEmployeeId: async (employeeId) => {
     const { data } = await http.get(`/shifts/schedules/employee/${employeeId}`);
@@ -351,7 +395,20 @@ export const shiftService = {
 export const timesheetService = {
   getAll: async (params = {}) => {
     const { data } = await http.get('/timesheets', { params });
-    return data;
+    const list = Array.isArray(data) ? data : (data?.data || []);
+    return list.map(ts => ({
+      ...ts,
+      employeeName: ts.employeeName || [ts.first_name, ts.last_name].filter(Boolean).join(' '),
+      employeeId: ts.employee_no || ts.employeeId || ts.employee_id,
+      department: ts.department || ts.department_name,
+      weekStart: ts.weekStart || (ts.period_from ? ts.period_from.slice(0, 10) : ''),
+      weekEnd: ts.weekEnd || (ts.period_to ? ts.period_to.slice(0, 10) : ''),
+      regularHours: Number(ts.total_regular_hours ?? ts.regularHours ?? 0),
+      overtimeHours: Number(ts.total_ot_hours ?? ts.overtimeHours ?? 0),
+      totalHours: Number(ts.total_regular_hours ?? ts.regularHours ?? 0) + Number(ts.total_ot_hours ?? ts.overtimeHours ?? 0),
+      paidOtHours: Number(ts.total_ot_hours ?? ts.paidOtHours ?? 0),
+      status: ts.status || 'Submitted',
+    }));
   },
   getById: async (id) => {
     const { data } = await http.get(`/timesheets/${id}`);

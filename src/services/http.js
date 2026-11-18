@@ -9,6 +9,12 @@ export const KIOSK_TOKEN_KEY = 'kiosk_device_token';
 export const KIOSK_LOCKED_EVENT = 'kiosk-device-locked';
 export const SESSION_ENDED_EVENT = 'workforce:session-ended';
 const KIOSK_OPEN_PATHS = ['/kiosk/config', '/kiosk/verify-pin'];
+const PUBLIC_AUTH_PATHS = new Set([
+  '/auth/login',
+  '/auth/forgot-password',
+  '/auth/reset-password',
+  '/auth/two-factor/verify',
+]);
 
 const store = () => {
   try { return window.sessionStorage; } catch { return null; }
@@ -26,8 +32,8 @@ const remove = (key) => {
   try { store()?.removeItem(key); } catch { /* ignore */ }
 };
 
-const WFM_API = import.meta.env.VITE_API_URL || 'http://localhost:4000/api/v1/wfm';
-const AUTH_API = import.meta.env.VITE_AUTH_URL || 'http://localhost:4000/api/v1/auth';
+const WFM_API = import.meta.env.VITE_API_URL || 'https://api.archonnellincorporated.com/api/v1/wfm';
+const AUTH_API = import.meta.env.VITE_AUTH_URL || 'https://api.archonnellincorporated.com/api/v1/auth';
 
 const http = axios.create({
   baseURL: WFM_API,
@@ -85,13 +91,17 @@ const readKioskToken = () => {
 };
 
 http.interceptors.request.use((config) => {
-  // Sync with universal cross-subdomain token
-  const token = read(TOKEN_KEY) || (typeof window !== 'undefined' ? window.localStorage.getItem('archon_token') : null);
-  if (token) {
-    config.headers.Authorization = `Bearer ${token}`;
+  const url = config.url || '';
+  // A stale SSO token must not be sent while trying to establish a new session.
+  // Some gateway versions attempt to validate it before handling the login and
+  // return a 5xx instead of simply treating the request as unauthenticated.
+  if (!PUBLIC_AUTH_PATHS.has(url)) {
+    const token = read(TOKEN_KEY) || (typeof window !== 'undefined' ? window.localStorage.getItem('archon_token') : null);
+    if (token) {
+      config.headers.Authorization = `Bearer ${token}`;
+    }
   }
 
-  const url = config.url || '';
   if (url.startsWith('/auth/')) {
     config.baseURL = AUTH_API;
     config.url = url.replace(/^\/auth/, '');
@@ -123,8 +133,12 @@ http.interceptors.response.use(
     // Unwrap standardized central gateway envelope { success: true, data }
     if (body && typeof body === 'object' && body.success !== undefined && body.data !== undefined) {
       if (typeof body.data === 'object' && !Array.isArray(body.data) && body.data !== null) {
+        // Objects are consumed directly by authentication and detail endpoints.
         return { ...body, ...body.data };
       }
+      // Service methods consistently destructure `data` from the value returned by http.
+      // Preserve that contract for list and scalar responses as well; returning the bare
+      // array here makes `const { data } = await http.get(...)` silently become undefined.
       return { ...body, data: body.data };
     }
     return body;
