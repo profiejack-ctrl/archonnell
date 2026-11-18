@@ -1,0 +1,17 @@
+// Types for hmoRules.js, which the frontend tests import.
+type Row=Record<string,unknown>;
+export const HMO_EXPIRING_DAYS:number;
+export function manilaToday(now?:Date):string;
+export function planStatusFor(plan:Row,today:string):string;
+export type HmoExpiryChange={table:'hmo_plans'|'hmo_enrollments'|'hmo_dependents';id:unknown;entityType:'plan'|'enrollment'|'dependent';action:string;previous:Row;values:Row&{status:string}};
+export function hmoExpiryChanges(input:{plans:Row[];enrollments:Row[];dependents:Row[];today:string;now?:string}):HmoExpiryChange[];
+export function dependentShares(plan:Row,sponsored:boolean):{employee_share:number;company_share:number};
+export function validDependentSplit(company:number,member:number):boolean;
+export function nextSponsoredDependent<T extends Row>(dependents:T[]):T|null;
+export const HMO_HISTORY_TYPES:string[];
+export function hmoHistoryType(resource:string):'provider'|'plan'|'enrollment'|'dependent';
+export const MAXICARE_FOLLOW_UP_WORKING_DAYS:number;
+export function submittedByUser(submittedBy:unknown,userId:unknown):boolean;
+export function memberIdCheck<T extends Row>(reference:string,employeeId:string,recordId:string,members:T[]):{other:T|null;family:T|null};
+export function workingDaysBetween(from:string,to:string,holidays?:string[]):number;
+export function maxicareFollowUpDue(maxicareStatus:string|undefined,submittedAt:string|null|undefined,today:string,holidays?:string[]):boolean;

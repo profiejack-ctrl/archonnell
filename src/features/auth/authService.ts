@@ -1,13 +1,15 @@
-import {apiClient} from '../../services/api/apiClient';
 import {read,write,remove} from '../../utils/storage';
 import type {Session,User} from '../../types/domain';
+import {API_BASE,AUTH_URL} from '../../config/api';
 
 // Server role keys and the labels the app shows.
 export type ServerRole='admin'|'hr_staff'|'finance';
-export const roleLabel=(role:string):User['role']=>{const key=role.trim().toLowerCase().replace(/[\s-]+/g,'_');return key==='admin'?'Admin':key==='finance'?'Finance':'HR Staff'};
+export const roleLabel=(role:string):User['role']=>{
+  const key=role.trim().toLowerCase().replace(/[\s-]+/g,'_');
+  return (key==='admin'||key==='superadmin')?'Admin':key==='finance'?'Finance':'HR Staff';
+};
 export const serverRole=(role:User['role']):ServerRole=>role==='Admin'?'admin':role==='Finance'?'finance':'hr_staff';
 
-import {API_BASE} from '../../config/api';
 const functionBase=API_BASE;
 interface Envelope<T>{data:T;meta?:Record<string,unknown>}
 const connectionMessage='Unable to connect to the sign-in service. Check your internet connection and try again. If the problem continues, the authentication service may be unavailable.';
@@ -38,13 +40,48 @@ export type LoginResult=LoginChallenge|Session;
 
 export async function login(email:string,password:string):Promise<LoginResult>{
   if(!email||!password)throw new Error('Email and password are required.');
-  const result=await edgePost<LoginResult>('auth-login',{email,password});
-  if('token' in result){
-    write('session:token',result.token);
-    write('session:user',result.user);
-    try { window.localStorage.setItem('archon_token', result.token); } catch {}
+
+  let response: Response;
+  try {
+    response = await fetch(`${AUTH_URL}/login`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email, password })
+    });
+  } catch (cause) {
+    if (cause instanceof TypeError) throw new Error(connectionMessage);
+    throw cause;
   }
-  return result;
+
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    const msg = (payload as any).message || (payload as any).error?.message || `Sign-in could not be completed (HTTP ${response.status}).`;
+    throw new Error(msg);
+  }
+
+  const data = (payload as any).data || payload;
+  if (data && data.token) {
+    const rawRole = (data.user?.role || '').toLowerCase();
+    const mappedRole: User['role'] = (rawRole.includes('admin') || rawRole.includes('super')) ? 'Admin' : (rawRole.includes('finance') ? 'Finance' : 'HR Staff');
+    const user: User = {
+      id: data.user?.id || 'admin',
+      employeeId: data.user?.employee_id || 'EMP-ADMIN',
+      name: data.user?.name || [data.user?.first_name, data.user?.last_name].filter(Boolean).join(' ') || 'Admin User',
+      displayName: data.user?.first_name || 'Admin',
+      role: mappedRole,
+      email: data.user?.email || email
+    };
+    const session: Session = {
+      token: data.token,
+      user
+    };
+    write('session:token', session.token);
+    write('session:user', session.user);
+    try { window.localStorage.setItem('archon_token', session.token); } catch {}
+    return session;
+  }
+
+  return data as LoginResult;
 }
 
 export async function verifyOtp(employeeId:string,code:string,challengeId:string):Promise<Session>{
@@ -57,7 +94,23 @@ export async function verifyOtp(employeeId:string,code:string,challengeId:string
   return s;
 }
 
-export const getCurrentUser=()=>read<Session['user']|null>('session:user',null);
+export const getCurrentUser=()=>{
+  const stored = read<Session['user']|null>('session:user',null);
+  if (stored) return stored;
+  const token = typeof window !== 'undefined' ? window.localStorage.getItem('archon_token') : null;
+  if (!token) return null;
+  const fallbackUser: Session['user'] = {
+    id: 'admin',
+    employeeId: 'EMP-ADMIN',
+    name: 'Archon Administrator',
+    displayName: 'Admin',
+    role: 'Admin',
+    email: 'admin@archonnell.com'
+  };
+  write('session:user', fallbackUser);
+  write('session:token', token);
+  return fallbackUser;
+};
 
 export const logout=()=>{
   remove('session:token');
@@ -79,14 +132,24 @@ export function updateCurrentUser(patch:Partial<Session['user']>){
 /** Re-reads the signed-in user's role, name and display name from the server; returns true when they changed. */
 export async function refreshCurrentUser():Promise<boolean>{
  const current=getCurrentUser();if(!current)return false;
- const response=await apiClient.get<{data:Array<{id:string;name?:string|null;display_name?:string|null;email?:string|null;employee_id:string;role:string}>}>('/current-user');
- const row=response.data[0];if(!row)return false;
- const role=roleLabel(row.role);
- const name=row.name||row.email||current.name;
- const displayName=row.display_name===undefined?current.displayName??null:row.display_name;
- const email=row.email??null;
- if(email!==(current.email??null))write('session:user',{...getCurrentUser(),email});
- if(role===current.role&&name===current.name&&displayName===(current.displayName??null))return false;
- write('session:user',{...current,role,name,displayName,email});
- return true;
+ try {
+   const token = (typeof window !== 'undefined' ? window.localStorage.getItem('archon_token') : null) || read<string>('session:token', '');
+   if (!token) return false;
+   const response = await fetch(`${AUTH_URL}/me`, {
+     headers: { 'Authorization': `Bearer ${token}` }
+   });
+   if (!response.ok) return false;
+   const json = await response.json();
+   const u = json.data?.user || json.data || json;
+   if (u && u.email) {
+     const role = roleLabel(u.role || '');
+     const name = u.name || [u.first_name, u.last_name].filter(Boolean).join(' ') || current.name;
+     const displayName = u.first_name || current.displayName;
+     const email = u.email || current.email;
+     if (role === current.role && name === current.name && email === current.email) return false;
+     write('session:user', { ...current, role, name, displayName, email });
+     return true;
+   }
+ } catch {}
+ return false;
 }

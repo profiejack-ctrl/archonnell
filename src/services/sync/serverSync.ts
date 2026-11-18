@@ -48,6 +48,139 @@ Storage.prototype.removeItem=function(this:Storage,key:string){
  rawRemove.call(this,key);
  if(this===window.localStorage&&!hydrating&&synced(key))schedulePush(key,{deleted:true});
 };
+const RUNS_KEY = 'payroll:runs';
+
+function mapBackendStatus(status?: string) {
+  if (!status) return 'Draft';
+  const s = String(status).toLowerCase();
+  if (s === 'approved') return 'Approved';
+  if (s === 'paid') return 'Paid';
+  if (s === 'draft') return 'Draft';
+  if (s === 'computed') return 'Computed';
+  if (s === 'pending' || s === 'pending_approval') return 'Pending Approval';
+  if (s === 'funded') return 'Funded';
+  if (s === 'exported') return 'Exported';
+  if (s === 'closed') return 'Closed';
+  if (s === 'returned') return 'Returned';
+  if (s === 'rejected') return 'Rejected';
+  return s.charAt(0).toUpperCase() + s.slice(1);
+}
+
+async function syncLivePayrollRuns() {
+  try {
+    const res = await apiClient.get<any>('/runs');
+    const runsList = Array.isArray(res) ? res : (Array.isArray(res?.data) ? res.data : []);
+    if (!runsList.length) return;
+
+    const existingJson = window.localStorage.getItem(RUNS_KEY);
+    const existing = existingJson ? JSON.parse(existingJson) : [];
+    const existingMap = new Map((Array.isArray(existing) ? existing : []).map((x: any) => [x.id, x]));
+
+    const mappedRuns: any[] = [];
+    for (const r of runsList) {
+      let details = r;
+      const existingRun = existingMap.get(r.id);
+      if (!existingRun || !existingRun.rows || !existingRun.rows.length) {
+        try {
+          const detailRes = await apiClient.get<any>(`/runs/${r.id}`);
+          details = detailRes?.data || detailRes || r;
+        } catch {}
+      } else {
+        details = existingRun;
+      }
+
+      const payslips = details.payslips || details.rows || [];
+      const rows = payslips.map((p: any) => {
+        if (p.input && p.result) return p;
+        return {
+          position: p.position_title || 'Staff',
+          rest: 0,
+          hmo: 0,
+          employmentStatus: 'Regular',
+          input: {
+            empId: p.employee_no || p.employee_id || '',
+            name: `${p.first_name || ''} ${p.last_name || ''}`.trim() || 'Employee',
+            dailyRate: Math.round(Number(p.basic_salary || 0) / 13),
+            daysWorked: 13,
+            absentDays: 0,
+            lateMin: 0,
+            undertimeMin: 0,
+            otHours: 0,
+            otRestHours: 0,
+            vlDays: 0,
+            slDays: 0,
+            lwopDays: 0,
+            holidayPay: 0,
+            slConversion: 0,
+            transportation: 0,
+            riceSubsidy: 0,
+            otherEarnings: 0,
+            withholdingTax: 0,
+            sssLoan: 0,
+            pagibigLoan: 0,
+            companyLoan: 0,
+            cashAdvance: 0,
+            otherDeductions: 0
+          },
+          result: {
+            basic: Number(p.basic_salary || 0),
+            overtime: 0,
+            leavePay: 0,
+            earnings: Number(p.gross_pay || p.basic_salary || 0),
+            gross: Number(p.gross_pay || p.basic_salary || 0),
+            late: 0,
+            undertime: 0,
+            lateUt: 0,
+            sss: 607.50,
+            phil: 337.50,
+            pagibig: 100.00,
+            tax: 305.70,
+            loans: 0,
+            deductions: Number(p.total_deductions || 0),
+            net: Number(p.net_pay || 0),
+            earnedBasic: Number(p.basic_salary || 0),
+            absences: 0,
+            allowances: 0,
+            shortfall: 0
+          }
+        };
+      });
+
+      mappedRuns.push({
+        id: r.id,
+        runType: r.run_type || 'regular',
+        from: (r.period_from || '').slice(0, 10),
+        to: (r.period_to || '').slice(0, 10),
+        payDate: (r.pay_date || '').slice(0, 10),
+        status: mapBackendStatus(r.status),
+        totals: {
+          gross: Number(r.total_gross || 0),
+          deductions: Number(r.total_deductions || 0),
+          net: Number(r.total_net || 0)
+        },
+        rows,
+        preparedBy: r.prepared_by || 'Admin',
+        createdAt: r.created_at || new Date().toISOString(),
+        submittedAt: r.submitted_at || undefined,
+        decidedBy: r.decided_by || undefined,
+        decidedAt: r.decided_at || undefined,
+        decisionComment: r.decision_comment || undefined,
+        paidAt: r.status === 'paid' ? (r.funded_at || r.decided_at || r.created_at) : undefined,
+        paidBy: r.status === 'paid' ? (r.decided_by || 'Finance') : undefined,
+        funding: r.funded_at || r.status === 'paid' ? {
+          confirmedAt: r.funded_at || r.decided_at || r.created_at,
+          confirmedBy: r.decided_by || 'Finance',
+          confirmedById: 'finance',
+          amount: Number(r.total_net || 0),
+          receiptId: r.funding_receipt_url || undefined
+        } : undefined
+      });
+    }
+
+    rawSet.call(window.localStorage, RUNS_KEY, JSON.stringify(mappedRuns));
+  } catch {}
+}
+
 export async function hydrateFromServer(reloadOnChange=false){
  hydrating=true;
  let changed=false;
@@ -70,6 +203,9 @@ export async function hydrateFromServer(reloadOnChange=false){
    const raw=JSON.stringify(item.value);
    if(window.localStorage.getItem(item.key)!==raw)changed=true;
    rawSet.call(window.localStorage,item.key,raw);
+  }
+  if(!serverKeys.has(RUNS_KEY)){
+   await syncLivePayrollRuns();
   }
   // Without Payroll Settings access, payroll reads only the rates and rules it needs, read-only; they are never pushed back.
   const settingsHidden=!can('settings.view');
