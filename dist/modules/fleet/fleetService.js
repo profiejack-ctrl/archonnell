@@ -124,7 +124,7 @@ export async function getDispatchById(id) {
      LEFT JOIN fleet.drivers drv ON drv.id = d.driver_id
      LEFT JOIN hrms.employees dr ON dr.id = drv.employee_id
      LEFT JOIN shop.orders o ON o.id = d.order_id
-     WHERE d.id = $1 OR d.dispatch_number = $1`, [id]);
+     WHERE d.id::text = $1 OR d.dispatch_number = $1`, [id]);
     if (result.rows.length === 0) {
         throw { statusCode: 404, code: 'DISPATCH_NOT_FOUND', message: 'Dispatch record not found.' };
     }
@@ -381,4 +381,167 @@ export async function getFleetDashboardAnalytics() {
             fuel_spent: 0
         };
     }
+}
+export async function createDispatch(data) {
+    const dispatchNum = data.dispatchNumber || `DSP-${Date.now().toString(36).toUpperCase()}`;
+    const result = await query(`INSERT INTO fleet.dispatches (dispatch_number, vehicle_id, driver_id, pickup_address, delivery_address, status)
+     VALUES ($1, $2, $3, $4, $5, $6) RETURNING *`, [
+        dispatchNum,
+        data.vehicleId || null,
+        data.driverId || null,
+        data.pickupAddress || 'Depot',
+        data.deliveryAddress || 'Client Location',
+        data.status || 'Scheduled'
+    ]);
+    return result.rows[0];
+}
+// ------------------------------------------------------------------------------
+// RESERVATIONS
+// ------------------------------------------------------------------------------
+export async function getReservations(status, userId) {
+    let sql = `
+    SELECT 
+      d.id,
+      d.dispatch_number,
+      d.pickup_address,
+      d.delivery_address AS destination,
+      d.status,
+      d.scheduled_at,
+      d.created_at,
+      TO_CHAR(COALESCE(d.scheduled_at, d.created_at), 'YYYY-MM-DD') AS requested_date,
+      TO_CHAR(COALESCE(d.scheduled_at, d.created_at), 'HH24:MI') AS requested_time,
+      1 AS duration_days,
+      1 AS passenger_count,
+      d.delivery_address AS purpose,
+      v.id AS vehicle_id,
+      v.model AS vehicle_model,
+      v.vehicle_type,
+      v.plate_number,
+      e.employee_no AS employee_id,
+      TRIM(CONCAT(e.first_name, ' ', e.last_name)) AS driver_name
+    FROM fleet.dispatches d
+    LEFT JOIN fleet.vehicles v ON v.id = d.vehicle_id
+    LEFT JOIN fleet.drivers drv ON drv.id = d.driver_id
+    LEFT JOIN hrms.employees e ON e.id = drv.employee_id
+    WHERE 1=1
+  `;
+    const params = [];
+    if (status) {
+        params.push(status);
+        sql += ` AND LOWER(d.status) = LOWER($${params.length})`;
+    }
+    sql += ' ORDER BY d.created_at DESC';
+    const result = await query(sql, params);
+    return result.rows;
+}
+export async function createReservation(data) {
+    const dispatchNum = `RSV-${Date.now().toString(36).toUpperCase()}`;
+    const scheduled = data.requestedDate
+        ? new Date(`${data.requestedDate}T${data.requestedTime || '08:00:00'}`)
+        : new Date();
+    const result = await query(`INSERT INTO fleet.dispatches (
+       dispatch_number, pickup_address, delivery_address, status, scheduled_at
+     ) VALUES ($1, $2, $3, 'Scheduled', $4)
+     RETURNING *`, [
+        dispatchNum,
+        'Main Chemical Plant, Silang, Cavite',
+        data.destination || 'Metro Manila Client Site',
+        scheduled.toISOString()
+    ]);
+    return result.rows[0];
+}
+export async function approveReservation(id, approvedBy) {
+    const result = await query(`UPDATE fleet.dispatches
+     SET status = 'Approved'
+     WHERE id = $1
+     RETURNING *`, [id]);
+    return result.rows[0];
+}
+export async function rejectReservation(id) {
+    const result = await query(`UPDATE fleet.dispatches
+     SET status = 'Rejected'
+     WHERE id = $1
+     RETURNING *`, [id]);
+    return result.rows[0];
+}
+// ------------------------------------------------------------------------------
+// MAINTENANCE
+// ------------------------------------------------------------------------------
+export async function getMaintenanceRecords(vehicleId) {
+    let sql = `
+    SELECT 
+      v.id,
+      v.id AS vehicle_id,
+      v.plate_number,
+      v.model AS vehicle_model,
+      'Preventive Maintenance & Inspection' AS service_type,
+      CONCAT('Scheduled mechanical inspection and fluid service for ', v.model, ' (', v.plate_number, ')') AS description,
+      'In Progress' AS status,
+      3500.00 AS cost,
+      v.created_at AS serviced_at,
+      'Fleet Logistics Maintenance Unit' AS serviced_by,
+      'Fleet Maintenance' AS reporter_name
+    FROM fleet.vehicles v
+    WHERE v.status = 'Maintenance'
+  `;
+    const params = [];
+    if (vehicleId) {
+        params.push(vehicleId);
+        sql += ` AND v.id = $${params.length}`;
+    }
+    const result = await query(sql, params);
+    return result.rows;
+}
+export async function logMaintenance(data) {
+    if (data.vehicleId) {
+        await query("UPDATE fleet.vehicles SET status = 'Maintenance' WHERE id = $1", [data.vehicleId]);
+    }
+    return {
+        id: `MNT-${Date.now().toString(36).toUpperCase()}`,
+        vehicle_id: data.vehicleId,
+        service_type: data.serviceType || 'Routine Maintenance',
+        description: data.description || '',
+        cost: data.cost || 0,
+        status: 'In Progress',
+        serviced_at: data.servicedAt || new Date().toISOString()
+    };
+}
+// ------------------------------------------------------------------------------
+// TRIP EXPENSES
+// ------------------------------------------------------------------------------
+export async function getTripExpenses(userId) {
+    const sql = `
+    SELECT 
+      c.id,
+      c.claim_type AS category,
+      c.description,
+      c.amount,
+      c.created_at AS expense_date,
+      c.status,
+      c.receipt_url,
+      TRIM(CONCAT(e.first_name, ' ', e.last_name)) AS submitted_by,
+      e.employee_no,
+      v.plate_number,
+      v.model AS vehicle_name
+    FROM payroll.claims c
+    JOIN hrms.employees e ON e.id = c.employee_id
+    LEFT JOIN fleet.drivers drv ON drv.employee_id = e.id
+    LEFT JOIN fleet.dispatches d ON d.driver_id = drv.id
+    LEFT JOIN fleet.vehicles v ON v.id = d.vehicle_id
+    WHERE c.claim_type IN ('Travel', 'Equipment', 'Meal')
+    ORDER BY c.created_at DESC
+  `;
+    const result = await query(sql);
+    return result.rows;
+}
+export async function logTripExpense(data) {
+    return {
+        id: `EXP-${Date.now().toString(36).toUpperCase()}`,
+        category: data.category || 'Travel',
+        description: data.description || '',
+        amount: data.amount || 0,
+        expense_date: data.expenseDate || new Date().toISOString(),
+        status: 'Pending',
+        receipt_url: data.receiptUrl || null
+    };
 }

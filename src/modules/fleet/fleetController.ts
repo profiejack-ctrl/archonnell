@@ -98,6 +98,22 @@ export async function getDispatch(req: Request, res: Response, next: NextFunctio
   }
 }
 
+export async function createDispatch(req: Request, res: Response, next: NextFunction) {
+  try {
+    const data = await fleetService.createDispatch({
+      vehicleId: req.body.vehicle_id || req.body.vehicleId,
+      driverId: req.body.driver_id || req.body.driverId,
+      pickupAddress: req.body.origin || req.body.pickup_address || req.body.pickupAddress || 'Depot',
+      deliveryAddress: req.body.destination || req.body.delivery_address || req.body.deliveryAddress || 'Delivery Address',
+      dispatchNumber: req.body.dispatch_no || req.body.dispatch_number || req.body.dispatchNumber,
+      status: req.body.status || 'Scheduled'
+    });
+    res.status(201).json({ success: true, message: 'Dispatch created successfully.', data });
+  } catch (err) {
+    next(err);
+  }
+}
+
 export async function assignDispatch(req: Request, res: Response, next: NextFunction) {
   try {
     const schema = z.object({
@@ -338,6 +354,91 @@ export async function systemIntegration(req: Request, res: Response, next: NextF
       status: 'Connected',
       timestamp: new Date().toISOString()
     });
+  } catch (err) {
+    next(err);
+  }
+}
+
+// ------------------------------------------------------------------------------
+// RESERVATIONS
+// ------------------------------------------------------------------------------
+export async function getReservations(req: Request, res: Response, next: NextFunction) {
+  try {
+    const status = req.query.status as string | undefined;
+    const userId = req.query.user_id as string | undefined;
+    const data = await fleetService.getReservations(status, userId);
+    res.json({ success: true, data });
+  } catch (err) {
+    next(err);
+  }
+}
+
+export async function createReservation(req: Request, res: Response, next: NextFunction) {
+  try {
+    const data = await fleetService.createReservation(req.body);
+    res.status(201).json({ success: true, data });
+  } catch (err) {
+    next(err);
+  }
+}
+
+export async function approveReservation(req: Request, res: Response, next: NextFunction) {
+  try {
+    const data = await fleetService.approveReservation(req.params.id as string, req.body?.approved_by);
+    res.json({ success: true, data });
+  } catch (err) {
+    next(err);
+  }
+}
+
+export async function rejectReservation(req: Request, res: Response, next: NextFunction) {
+  try {
+    const data = await fleetService.rejectReservation(req.params.id as string);
+    res.json({ success: true, data });
+  } catch (err) {
+    next(err);
+  }
+}
+
+// ------------------------------------------------------------------------------
+// MAINTENANCE
+// ------------------------------------------------------------------------------
+export async function getMaintenance(req: Request, res: Response, next: NextFunction) {
+  try {
+    const vehicleId = req.query.vehicle_id as string | undefined;
+    const data = await fleetService.getMaintenanceRecords(vehicleId);
+    res.json({ success: true, data });
+  } catch (err) {
+    next(err);
+  }
+}
+
+export async function logMaintenance(req: Request, res: Response, next: NextFunction) {
+  try {
+    const data = await fleetService.logMaintenance(req.body);
+    res.status(201).json({ success: true, data });
+  } catch (err) {
+    next(err);
+  }
+}
+
+// ------------------------------------------------------------------------------
+// TRIP EXPENSES
+// ------------------------------------------------------------------------------
+export async function getTripExpenses(req: Request, res: Response, next: NextFunction) {
+  try {
+    const userId = req.query.user_id as string | undefined;
+    const data = await fleetService.getTripExpenses(userId);
+    res.json({ success: true, data });
+  } catch (err) {
+    next(err);
+  }
+}
+
+export async function logTripExpense(req: Request, res: Response, next: NextFunction) {
+  try {
+    const data = await fleetService.logTripExpense(req.body);
+    res.status(201).json({ success: true, data });
   } catch (err) {
     next(err);
   }

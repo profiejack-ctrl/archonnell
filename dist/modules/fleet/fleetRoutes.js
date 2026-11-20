@@ -16,6 +16,15 @@ router.get('/dispatches/active', fleetController.getActiveTripsTelemetry);
 router.get('/analytics/dashboard', fleetController.getFleetAnalytics);
 router.get('/notifications', fleetController.getFleetNotifications);
 router.post('/integration/system', fleetController.systemIntegration);
+// Reservations, Maintenance & Trip Expenses
+router.get('/reservations', fleetController.getReservations);
+router.post('/reservations', fleetController.createReservation);
+router.post('/reservations/:id/approve', fleetController.approveReservation);
+router.post('/reservations/:id/reject', fleetController.rejectReservation);
+router.get('/maintenance', fleetController.getMaintenance);
+router.post('/maintenance', fleetController.logMaintenance);
+router.get('/trip-expenses', fleetController.getTripExpenses);
+router.post('/trip-expenses', fleetController.logTripExpense);
 // ------------------------------------------------------------------------------
 // AUTHENTICATED MANAGEMENT ENDPOINTS
 // ------------------------------------------------------------------------------
@@ -31,6 +40,7 @@ router.post('/drivers', authorize(['superadmin', 'fleet_manager', 'hr_admin']), 
 // Dispatches
 router.get('/dispatches', fleetController.getDispatches);
 router.get('/dispatches/:id', fleetController.getDispatch);
+router.post('/dispatches', authorize(['superadmin', 'fleet_manager']), fleetController.createDispatch);
 router.patch('/dispatches/:id/assign', authorize(['superadmin', 'fleet_manager']), fleetController.assignDispatch);
 router.post('/dispatches/:id/start', authorize(['superadmin', 'fleet_manager', 'driver']), fleetController.startDispatch);
 router.post('/dispatches/:id/complete', authorize(['superadmin', 'fleet_manager', 'driver']), fleetController.completeDispatch);
