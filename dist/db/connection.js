@@ -27,22 +27,58 @@ if (backupPool) {
         console.error('[DB Backup] Unexpected pool error on idle client:', err.message);
     });
 }
+function isConnectionError(err) {
+    if (!err)
+        return false;
+    const code = String(err.code || '');
+    const msg = String(err.message || '').toLowerCase();
+    return (code === 'ECONNREFUSED' ||
+        code === 'ECONNRESET' ||
+        code === 'ETIMEDOUT' ||
+        code === 'EHOSTUNREACH' ||
+        code === 'ENOTFOUND' ||
+        code.startsWith('08') || // Class 08 - Connection Exception
+        code.startsWith('57P') || // Class 57 - Operator Intervention
+        msg.includes('connection terminated') ||
+        msg.includes('connection timeout') ||
+        msg.includes('client has encountered a connection error') ||
+        msg.includes('timeout exceeded'));
+}
+let schemaMigrationAttempted = false;
+export async function ensureSchema() {
+    if (schemaMigrationAttempted)
+        return;
+    schemaMigrationAttempted = true;
+    try {
+        await primaryPool.query(`
+      ALTER TABLE auth_core.users ADD COLUMN IF NOT EXISTS username VARCHAR(100);
+      UPDATE auth_core.users SET username = LOWER(email) WHERE username IS NULL;
+    `);
+        console.log('[DB Schema] Verified/migrated username column on auth_core.users');
+    }
+    catch (err) {
+        console.warn('[DB Schema] Auto-migration notice:', err.message);
+    }
+}
 /**
  * Execute a query with automatic failover to the secondary pool if primary fails.
  */
 export async function query(text, params) {
+    if (!schemaMigrationAttempted) {
+        ensureSchema().catch(() => { });
+    }
     try {
         return await primaryPool.query(text, params);
     }
     catch (primaryError) {
-        if (env.DB_FAILOVER_ENABLED && backupPool) {
-            console.warn('[DB Failover] Primary query failed. Routing to backup database:', primaryError.message);
+        if (env.DB_FAILOVER_ENABLED && backupPool && isConnectionError(primaryError)) {
+            console.warn('[DB Failover] Primary connection failed. Routing to backup database:', primaryError.message);
             try {
                 return await backupPool.query(text, params);
             }
             catch (backupError) {
                 console.error('[DB Failover] Backup query failed as well:', backupError.message);
-                throw backupError;
+                throw primaryError;
             }
         }
         throw primaryError;

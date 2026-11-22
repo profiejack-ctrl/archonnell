@@ -1685,8 +1685,7 @@ export async function handleBridgeAction(req, res, next) {
                 return res.json({ success: true, message: 'Bulk delete processed.', deleted: deletedIds, skipped });
             }
             case 'page_user_directory': {
-                const [users, departments, positions, roleRows] = await Promise.all([
-                    query(`SELECT u.id, COALESCE(u.username,u.email) AS username, u.email, u.full_name, u.global_role,
+                const usersPromise = query(`SELECT u.id, COALESCE(u.username,u.email) AS username, u.email, u.full_name, u.global_role,
                         u.is_active, u.created_at, u.phone_number,
                         e.id AS employee_id, e.employee_no, e.first_name, e.last_name,
                         e.hire_date, d.name AS department, p.title AS position
@@ -1694,7 +1693,22 @@ export async function handleBridgeAction(req, res, next) {
                  LEFT JOIN hrms.employees e ON e.user_id = u.id
                  LEFT JOIN hrms.departments d ON d.id = e.department_id
                  LEFT JOIN hrms.positions p ON p.id = e.position_id
-                 ORDER BY u.created_at DESC`),
+                 ORDER BY u.created_at DESC`).catch((err) => {
+                    if (err?.code === '42703' || String(err?.message || '').includes('username')) {
+                        return query(`SELECT u.id, u.email AS username, u.email, u.full_name, u.global_role,
+                        u.is_active, u.created_at, u.phone_number,
+                        e.id AS employee_id, e.employee_no, e.first_name, e.last_name,
+                        e.hire_date, d.name AS department, p.title AS position
+                 FROM auth_core.users u
+                 LEFT JOIN hrms.employees e ON e.user_id = u.id
+                 LEFT JOIN hrms.departments d ON d.id = e.department_id
+                 LEFT JOIN hrms.positions p ON p.id = e.position_id
+                 ORDER BY u.created_at DESC`);
+                    }
+                    throw err;
+                });
+                const [users, departments, positions, roleRows] = await Promise.all([
+                    usersPromise,
                     hrmsService.getAllDepartments(),
                     hrmsService.getAllPositions(),
                     query('SELECT DISTINCT global_role FROM auth_core.users ORDER BY global_role')
@@ -1794,9 +1808,22 @@ export async function handleBridgeAction(req, res, next) {
                 let userId;
                 try {
                     await client.query('BEGIN');
-                    const created = await client.query(`INSERT INTO auth_core.users
-            (username, email, password_hash, full_name, global_role, phone_number)
-            VALUES ($1,$2,$3,$4,$5,$6) RETURNING id`, [employee.employee_no, email, passwordHash, fullName, role, mobile]);
+                    let created;
+                    try {
+                        created = await client.query(`INSERT INTO auth_core.users
+              (username, email, password_hash, full_name, global_role, phone_number)
+              VALUES ($1,$2,$3,$4,$5,$6) RETURNING id`, [employee.employee_no, email, passwordHash, fullName, role, mobile]);
+                    }
+                    catch (insertErr) {
+                        if (insertErr?.code === '42703' || String(insertErr?.message || '').includes('username')) {
+                            created = await client.query(`INSERT INTO auth_core.users
+                (email, password_hash, full_name, global_role, phone_number)
+                VALUES ($1,$2,$3,$4,$5) RETURNING id`, [email, passwordHash, fullName, role, mobile]);
+                        }
+                        else {
+                            throw insertErr;
+                        }
+                    }
                     userId = created.rows[0].id;
                     const linked = await client.query(`UPDATE hrms.employees SET user_id=$1, first_name=$2, last_name=$3,
             email=$4, phone=$5,

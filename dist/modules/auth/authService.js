@@ -3,9 +3,22 @@ import jwt from 'jsonwebtoken';
 import { query } from '../../db/connection.js';
 import { env } from '../../config/env.js';
 export async function loginUser(email, passwordPlain) {
-    const result = await query(`SELECT id, username, email, password_hash, full_name, global_role, is_active
-     FROM auth_core.users
-     WHERE LOWER(email) = LOWER($1) OR LOWER(username) = LOWER($1)`, [email]);
+    let result;
+    try {
+        result = await query(`SELECT id, username, email, password_hash, full_name, global_role, is_active
+       FROM auth_core.users
+       WHERE LOWER(email) = LOWER($1) OR LOWER(username) = LOWER($1)`, [email]);
+    }
+    catch (err) {
+        if (err?.code === '42703' || String(err?.message || '').includes('username')) {
+            result = await query(`SELECT id, email, password_hash, full_name, global_role, is_active
+         FROM auth_core.users
+         WHERE LOWER(email) = LOWER($1)`, [email]);
+        }
+        else {
+            throw err;
+        }
+    }
     if (result.rows.length === 0) {
         throw { statusCode: 401, code: 'INVALID_CREDENTIALS', message: 'Invalid email or password.' };
     }
