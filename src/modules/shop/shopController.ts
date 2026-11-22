@@ -63,7 +63,7 @@ export async function createProduct(req: Request, res: Response, next: NextFunct
       stock: z.number().int().nonnegative().optional(),
       sku: z.string().optional(),
       images: z.array(z.string()).optional(),
-      specs: z.record(z.any()).optional()
+      specs: z.record(z.string(), z.any()).optional()
     });
     const parsed = schema.parse(req.body);
     const data = await shopService.createProduct(parsed);

@@ -1,29 +1,21 @@
-"use strict";
-var __importDefault = (this && this.__importDefault) || function (mod) {
-    return (mod && mod.__esModule) ? mod : { "default": mod };
-};
-Object.defineProperty(exports, "__esModule", { value: true });
-exports.sendEmail = sendEmail;
-exports.sendSensitiveEmail = sendSensitiveEmail;
-exports.sendOtpEmail = sendOtpEmail;
-const nodemailer_1 = __importDefault(require("nodemailer"));
-const env_js_1 = require("../config/env.js");
+import nodemailer from 'nodemailer';
+import { env } from '../config/env.js';
 let transporter = null;
 function getTransporter() {
     if (transporter)
         return transporter;
-    if (env_js_1.env.SMTP_HOST && env_js_1.env.SMTP_USER && env_js_1.env.SMTP_PASS) {
+    if (env.SMTP_HOST && env.SMTP_USER && env.SMTP_PASS) {
         try {
-            transporter = nodemailer_1.default.createTransport({
-                host: env_js_1.env.SMTP_HOST,
-                port: env_js_1.env.SMTP_PORT,
-                secure: env_js_1.env.SMTP_SECURE, // true for 465, false for 587
+            transporter = nodemailer.createTransport({
+                host: env.SMTP_HOST,
+                port: env.SMTP_PORT,
+                secure: env.SMTP_SECURE, // true for 465, false for 587
                 auth: {
-                    user: env_js_1.env.SMTP_USER,
-                    pass: env_js_1.env.SMTP_PASS
+                    user: env.SMTP_USER,
+                    pass: env.SMTP_PASS
                 }
             });
-            console.log(`[EmailService] Transporter initialized for ${env_js_1.env.SMTP_HOST}:${env_js_1.env.SMTP_PORT}`);
+            console.log(`[EmailService] Transporter initialized for ${env.SMTP_HOST}:${env.SMTP_PORT}`);
         }
         catch (err) {
             console.error('[EmailService] Failed to initialize SMTP transporter:', err.message);
@@ -35,7 +27,7 @@ function getTransporter() {
 /**
  * Sends a generic email or logs to console if SMTP is unconfigured.
  */
-async function sendEmail(options) {
+export async function sendEmail(options) {
     const mailer = getTransporter();
     if (!mailer) {
         console.log('\n======================================================');
@@ -48,7 +40,7 @@ async function sendEmail(options) {
     }
     try {
         await mailer.sendMail({
-            from: `"${env_js_1.env.SMTP_FROM_NAME}" <${env_js_1.env.SMTP_FROM_EMAIL}>`,
+            from: `"${env.SMTP_FROM_NAME}" <${env.SMTP_FROM_EMAIL}>`,
             to: options.to,
             subject: options.subject,
             text: options.text,
@@ -70,13 +62,13 @@ async function sendEmail(options) {
     }
 }
 /** Send credential or other sensitive mail without logging its contents on fallback/failure. */
-async function sendSensitiveEmail(options) {
+export async function sendSensitiveEmail(options) {
     const mailer = getTransporter();
     if (!mailer)
         return { success: false, error: 'SMTP is not configured; credentials were not emailed.' };
     try {
         await mailer.sendMail({
-            from: `"${env_js_1.env.SMTP_FROM_NAME}" <${env_js_1.env.SMTP_FROM_EMAIL}>`,
+            from: `"${env.SMTP_FROM_NAME}" <${env.SMTP_FROM_EMAIL}>`,
             to: options.to,
             subject: options.subject,
             text: options.text,
@@ -92,8 +84,8 @@ async function sendSensitiveEmail(options) {
 /**
  * Sends an Archon Nell branded One-Time Password (OTP) verification email.
  */
-async function sendOtpEmail(email, code, purpose, moduleName) {
-    const expiryMin = env_js_1.env.OTP_EXPIRATION_MINUTES;
+export async function sendOtpEmail(email, code, purpose, moduleName) {
+    const expiryMin = env.OTP_EXPIRATION_MINUTES;
     const readablePurpose = purpose.replace(/_/g, ' ').toUpperCase();
     const readableModule = moduleName.toUpperCase();
     const subject = `[${readableModule}] Your Archon Nell Verification Code: ${code}`;

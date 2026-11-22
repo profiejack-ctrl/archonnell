@@ -1,55 +1,16 @@
-"use strict";
-var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
-    if (k2 === undefined) k2 = k;
-    var desc = Object.getOwnPropertyDescriptor(m, k);
-    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
-      desc = { enumerable: true, get: function() { return m[k]; } };
-    }
-    Object.defineProperty(o, k2, desc);
-}) : (function(o, m, k, k2) {
-    if (k2 === undefined) k2 = k;
-    o[k2] = m[k];
-}));
-var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
-    Object.defineProperty(o, "default", { enumerable: true, value: v });
-}) : function(o, v) {
-    o["default"] = v;
-});
-var __importStar = (this && this.__importStar) || (function () {
-    var ownKeys = function(o) {
-        ownKeys = Object.getOwnPropertyNames || function (o) {
-            var ar = [];
-            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
-            return ar;
-        };
-        return ownKeys(o);
-    };
-    return function (mod) {
-        if (mod && mod.__esModule) return mod;
-        var result = {};
-        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
-        __setModuleDefault(result, mod);
-        return result;
-    };
-})();
-var __importDefault = (this && this.__importDefault) || function (mod) {
-    return (mod && mod.__esModule) ? mod : { "default": mod };
-};
-Object.defineProperty(exports, "__esModule", { value: true });
-exports.handleBridgeAction = handleBridgeAction;
-const jsonwebtoken_1 = __importDefault(require("jsonwebtoken"));
-const bcryptjs_1 = __importDefault(require("bcryptjs"));
-const env_js_1 = require("../../config/env.js");
-const hrmsService = __importStar(require("./hrmsService.js"));
-const authService = __importStar(require("../auth/authService.js"));
-const wfmService = __importStar(require("../wfm/wfmService.js"));
-const emailService = __importStar(require("../../services/emailService.js"));
-const connection_js_1 = require("../../db/connection.js");
+import jwt from 'jsonwebtoken';
+import bcrypt from 'bcryptjs';
+import { env } from '../../config/env.js';
+import * as hrmsService from './hrmsService.js';
+import * as authService from '../auth/authService.js';
+import * as wfmService from '../wfm/wfmService.js';
+import * as emailService from '../../services/emailService.js';
+import { getClient, query } from '../../db/connection.js';
 function bridgeIsoDate(date) { return date.toISOString().slice(0, 10); }
 async function findEmployeeForUser(user) {
     if (!user?.id)
         return null;
-    const result = await (0, connection_js_1.query)(`SELECT e.*, d.name AS department_name, p.title AS position_title
+    const result = await query(`SELECT e.*, d.name AS department_name, p.title AS position_title
     FROM hrms.employees e LEFT JOIN hrms.departments d ON d.id=e.department_id
     LEFT JOIN hrms.positions p ON p.id=e.position_id WHERE e.user_id=$1 LIMIT 1`, [user.id]);
     return result.rows[0] || null;
@@ -86,7 +47,7 @@ async function getApplicantRecord(requestedId) {
         const index = Number(id);
         if (index < 1)
             throw { statusCode: 400, code: 'INVALID_APPLICANT_ID', message: 'Applicant ID is invalid.' };
-        const result = await (0, connection_js_1.query)(`SELECT a.*, j.title AS job_title, d.name AS department_name
+        const result = await query(`SELECT a.*, j.title AS job_title, d.name AS department_name
        FROM hrms.applicants a
        LEFT JOIN hrms.job_postings j ON j.id = a.job_posting_id
        LEFT JOIN hrms.departments d ON d.id = j.department_id
@@ -95,7 +56,7 @@ async function getApplicantRecord(requestedId) {
             throw { statusCode: 404, code: 'APPLICANT_NOT_FOUND', message: 'Applicant not found.' };
         return result.rows[0];
     }
-    const result = await (0, connection_js_1.query)(`SELECT a.*, j.title AS job_title, d.name AS department_name
+    const result = await query(`SELECT a.*, j.title AS job_title, d.name AS department_name
      FROM hrms.applicants a
      LEFT JOIN hrms.job_postings j ON j.id = a.job_posting_id
      LEFT JOIN hrms.departments d ON d.id = j.department_id
@@ -112,7 +73,7 @@ async function getJobRecord(requestedId) {
         const index = Number(id);
         if (index < 1)
             throw { statusCode: 400, code: 'INVALID_JOB_ID', message: 'Job posting ID is invalid.' };
-        const result = await (0, connection_js_1.query)(`WITH numbered AS (
+        const result = await query(`WITH numbered AS (
          SELECT j.*, ROW_NUMBER() OVER (ORDER BY j.created_at DESC)::int AS legacy_id
          FROM hrms.job_postings j
        ) SELECT n.*, d.name AS department_name, p.title AS position_title
@@ -122,7 +83,7 @@ async function getJobRecord(requestedId) {
             throw { statusCode: 404, code: 'JOB_POSTING_NOT_FOUND', message: 'Job posting not found.' };
         return result.rows[0];
     }
-    const result = await (0, connection_js_1.query)(`SELECT j.*, d.name AS department_name, p.title AS position_title
+    const result = await query(`SELECT j.*, d.name AS department_name, p.title AS position_title
      FROM hrms.job_postings j LEFT JOIN hrms.departments d ON d.id = j.department_id
      LEFT JOIN hrms.positions p ON p.id = j.position_id WHERE j.id::text = $1`, [id]);
     if (!result.rows[0])
@@ -134,11 +95,11 @@ async function getEmployeeRecord(requestedId) {
     if (!id)
         throw { statusCode: 400, code: 'EMPLOYEE_ID_REQUIRED', message: 'Employee ID is required.' };
     const result = /^\d+$/.test(id)
-        ? await (0, connection_js_1.query)(`WITH numbered AS (
+        ? await query(`WITH numbered AS (
          SELECT e.id, ROW_NUMBER() OVER (ORDER BY e.created_at DESC)::int AS legacy_id
          FROM hrms.employees e
        ) SELECT id FROM numbered WHERE legacy_id = $1`, [Number(id)])
-        : await (0, connection_js_1.query)('SELECT id FROM hrms.employees WHERE id::text = $1', [id]);
+        : await query('SELECT id FROM hrms.employees WHERE id::text = $1', [id]);
     if (!result.rows[0])
         throw { statusCode: 404, code: 'EMPLOYEE_NOT_FOUND', message: 'Employee not found.' };
     return result.rows[0].id;
@@ -148,11 +109,11 @@ async function getVacancyRequestRecord(requestedId) {
     if (!id)
         throw { statusCode: 400, code: 'VACANCY_REQUEST_ID_REQUIRED', message: 'Vacancy request ID is required.' };
     const result = /^\d+$/.test(id)
-        ? await (0, connection_js_1.query)(`WITH numbered AS (
+        ? await query(`WITH numbered AS (
          SELECT v.id, ROW_NUMBER() OVER (ORDER BY v.created_at DESC)::int AS legacy_id
          FROM hrms.vacancy_requests v
        ) SELECT id FROM numbered WHERE legacy_id = $1`, [Number(id)])
-        : await (0, connection_js_1.query)('SELECT id FROM hrms.vacancy_requests WHERE id::text = $1 OR request_no = $1', [id]);
+        : await query('SELECT id FROM hrms.vacancy_requests WHERE id::text = $1 OR request_no = $1', [id]);
     if (!result.rows[0])
         throw { statusCode: 404, code: 'VACANCY_REQUEST_NOT_FOUND', message: 'Vacancy request not found.' };
     return result.rows[0].id;
@@ -188,7 +149,7 @@ function mapApplicant(a, index = 0) {
     };
 }
 async function getInterviewApplicants(status, round) {
-    const result = await (0, connection_js_1.query)(`WITH numbered_applicants AS (
+    const result = await query(`WITH numbered_applicants AS (
        SELECT a.*, ROW_NUMBER() OVER (ORDER BY a.created_at DESC)::int AS legacy_id
        FROM hrms.applicants a
      )
@@ -223,7 +184,7 @@ async function getInterviewApplicants(status, round) {
 }
 async function getOnboardingData() {
     const [rows, contracts, departments, positions, departmentHires, monthlyHires] = await Promise.all([
-        (0, connection_js_1.query)(`WITH numbered AS (
+        query(`WITH numbered AS (
              SELECT o.*, ROW_NUMBER() OVER (ORDER BY o.created_at DESC)::int AS legacy_id
              FROM hrms.onboarding_records o
            )
@@ -235,14 +196,14 @@ async function getOnboardingData() {
            LEFT JOIN hrms.departments d ON d.id = e.department_id
            LEFT JOIN hrms.positions p ON p.id = e.position_id
            ORDER BY n.created_at DESC`),
-        (0, connection_js_1.query)('SELECT DISTINCT contract_type FROM hrms.onboarding_records ORDER BY contract_type'),
+        query('SELECT DISTINCT contract_type FROM hrms.onboarding_records ORDER BY contract_type'),
         hrmsService.getAllDepartments(),
         hrmsService.getAllPositions(),
-        (0, connection_js_1.query)(`SELECT COALESCE(d.name, 'Unassigned') AS department, COUNT(*)::int AS count
+        query(`SELECT COALESCE(d.name, 'Unassigned') AS department, COUNT(*)::int AS count
            FROM hrms.onboarding_records o JOIN hrms.employees e ON e.id = o.employee_id
            LEFT JOIN hrms.departments d ON d.id = e.department_id
            GROUP BY COALESCE(d.name, 'Unassigned') ORDER BY count DESC`),
-        (0, connection_js_1.query)(`SELECT to_char(date_trunc('month', e.hire_date), 'YYYY-MM') AS year_month,
+        query(`SELECT to_char(date_trunc('month', e.hire_date), 'YYYY-MM') AS year_month,
                   to_char(date_trunc('month', e.hire_date), 'Mon YYYY') AS label,
                   to_char(date_trunc('month', e.hire_date), 'Mon') AS short_label,
                   COUNT(*)::int AS count
@@ -267,7 +228,7 @@ async function getOnboardingData() {
  * Universal Action Dispatcher for Archon Nell Core HRMS Frontend.
  * Maps legacy `api.php` and `auth-api.php` action requests directly to PostgreSQL schemas (`hrms.*`, `auth_core.*`).
  */
-async function handleBridgeAction(req, res, next) {
+export async function handleBridgeAction(req, res, next) {
     try {
         // Some legacy bridge requests (including GETs and empty POSTs) have no body.
         // Normalize it once so action dispatch and individual handlers can safely read it.
@@ -277,7 +238,7 @@ async function handleBridgeAction(req, res, next) {
         let token = authHeader && authHeader.startsWith('Bearer ') ? authHeader.substring(7) : (req.cookies && req.cookies.archon_token);
         if (token && !req.user) {
             try {
-                req.user = jsonwebtoken_1.default.verify(token, env_js_1.env.JWT_SECRET);
+                req.user = jwt.verify(token, env.JWT_SECRET);
             }
             catch (e) {
                 // Token invalid or expired, proceed unauthenticated
@@ -506,8 +467,8 @@ async function handleBridgeAction(req, res, next) {
             case 'update_employee': {
                 const empId = await getEmployeeRecord(body.employee_id || body.id);
                 const nameParts = String(body.full_name || '').trim().split(/\s+/);
-                const department = await (0, connection_js_1.query)('SELECT id FROM hrms.departments WHERE lower(name) = lower($1) LIMIT 1', [String(body.department || '')]);
-                const position = await (0, connection_js_1.query)('SELECT id FROM hrms.positions WHERE lower(title) = lower($1) LIMIT 1', [String(body.position || '')]);
+                const department = await query('SELECT id FROM hrms.departments WHERE lower(name) = lower($1) LIMIT 1', [String(body.department || '')]);
+                const position = await query('SELECT id FROM hrms.positions WHERE lower(title) = lower($1) LIMIT 1', [String(body.position || '')]);
                 const result = await hrmsService.updateEmployee(empId, {
                     firstName: nameParts[0] || undefined,
                     lastName: nameParts.slice(1).join(' ') || undefined,
@@ -518,7 +479,7 @@ async function handleBridgeAction(req, res, next) {
                     employmentStatus: body.employment_status,
                     address: body.address
                 });
-                await (0, connection_js_1.query)(`UPDATE hrms.employees SET contract_type = COALESCE(NULLIF($1, ''), contract_type),
+                await query(`UPDATE hrms.employees SET contract_type = COALESCE(NULLIF($1, ''), contract_type),
              gender = COALESCE(NULLIF($2, ''), gender),
              birth_date = COALESCE(NULLIF($3, '')::date, birth_date),
              hire_date = COALESCE(NULLIF($4, '')::date, hire_date), updated_at = NOW()
@@ -556,11 +517,11 @@ async function handleBridgeAction(req, res, next) {
                 const mapped = await Promise.all(applicants.map(async (applicant) => {
                     const globalIndex = allApplicants.findIndex((row) => row.id === applicant.id);
                     const mappedApplicant = mapApplicant(applicant, globalIndex);
-                    const rejection = await (0, connection_js_1.query)(`SELECT stage, category, reason, rejected_by, future_invited, created_at
+                    const rejection = await query(`SELECT stage, category, reason, rejected_by, future_invited, created_at
              FROM hrms.applicant_rejections WHERE applicant_id = $1
              ORDER BY created_at DESC LIMIT 1`, [applicant.id]);
                     const latest = rejection.rows[0];
-                    const archiveEvent = status === 'Archived' ? await (0, connection_js_1.query)(`SELECT description, username, created_at FROM hrms.applicant_events
+                    const archiveEvent = status === 'Archived' ? await query(`SELECT description, username, created_at FROM hrms.applicant_events
              WHERE applicant_id=$1 AND action='archived' ORDER BY created_at DESC LIMIT 1`, [applicant.id]) : { rows: [] };
                     const archived = archiveEvent.rows[0];
                     return {
@@ -586,7 +547,7 @@ async function handleBridgeAction(req, res, next) {
             }
             case 'page_talent_pool': {
                 const [applicantRows, postingRows] = await Promise.all([
-                    (0, connection_js_1.query)(`WITH numbered AS (
+                    query(`WITH numbered AS (
                    SELECT a.*, ROW_NUMBER() OVER (ORDER BY a.created_at DESC)::int AS legacy_id
                    FROM hrms.applicants a
                  ), latest_rejection AS (
@@ -603,7 +564,7 @@ async function handleBridgeAction(req, res, next) {
                  LEFT JOIN hrms.departments d ON d.id = j.department_id
                  WHERE r.future_invited = TRUE AND n.status = 'Rejected'
                  ORDER BY n.created_at DESC`),
-                    (0, connection_js_1.query)(`WITH numbered AS (
+                    query(`WITH numbered AS (
                    SELECT j.*, ROW_NUMBER() OVER (ORDER BY j.created_at DESC)::int AS legacy_id
                    FROM hrms.job_postings j WHERE j.status = 'Open'
                  )
@@ -649,11 +610,11 @@ async function handleBridgeAction(req, res, next) {
                 const applicant = await getApplicantRecord(req.query.id ?? body.id);
                 const mappedApplicant = { ...mapApplicant(applicant), id: Number(req.query.id ?? body.id) || 0 };
                 const [interviews, rejection, history] = await Promise.all([
-                    (0, connection_js_1.query)(`SELECT round, scheduled_at, interview_type, location, interviewer_name
+                    query(`SELECT round, scheduled_at, interview_type, location, interviewer_name
                  FROM hrms.applicant_interviews WHERE applicant_id = $1 ORDER BY created_at DESC`, [applicant.id]),
-                    (0, connection_js_1.query)(`SELECT stage, category, reason, rejected_by, created_at
+                    query(`SELECT stage, category, reason, rejected_by, created_at
                  FROM hrms.applicant_rejections WHERE applicant_id = $1 ORDER BY created_at DESC LIMIT 1`, [applicant.id]),
-                    (0, connection_js_1.query)(`SELECT action, description, created_at, username
+                    query(`SELECT action, description, created_at, username
                  FROM hrms.applicant_events WHERE applicant_id = $1 ORDER BY created_at DESC`, [applicant.id])
                 ]);
                 const pre = interviews.rows.find((row) => row.round === 'Pre-Interview');
@@ -725,13 +686,13 @@ async function handleBridgeAction(req, res, next) {
             }
             case 'applicant_history': {
                 const applicant = await getApplicantRecord(req.query.id ?? body.id);
-                const history = await (0, connection_js_1.query)(`SELECT action, description, created_at, username
+                const history = await query(`SELECT action, description, created_at, username
            FROM hrms.applicant_events WHERE applicant_id = $1 ORDER BY created_at DESC`, [applicant.id]);
                 return res.json({ success: true, history: history.rows });
             }
             case 'interview_confirmation_history': {
                 const applicant = await getApplicantRecord(req.query.applicant_id ?? req.query.id ?? body.applicant_id ?? body.id);
-                const result = await (0, connection_js_1.query)(`SELECT id, round, scheduled_at, status, confirmation_deadline, created_at
+                const result = await query(`SELECT id, round, scheduled_at, status, confirmation_deadline, created_at
            FROM hrms.applicant_interviews WHERE applicant_id = $1 ORDER BY created_at DESC`, [applicant.id]);
                 const history = result.rows.map((row, index) => ({
                     id: index + 1,
@@ -758,24 +719,24 @@ async function handleBridgeAction(req, res, next) {
                 const note = String(body.note || '').trim();
                 if (!note)
                     return res.status(400).json({ success: false, message: 'A contact note is required.' });
-                await (0, connection_js_1.query)(`INSERT INTO hrms.applicant_events (applicant_id, action, description, username)
+                await query(`INSERT INTO hrms.applicant_events (applicant_id, action, description, username)
            VALUES ($1, 'contact_recorded', $2, $3)`, [applicant.id, `${body.round || 'Recruitment'}: ${note}`, req.user?.email || null]);
                 return res.json({ success: true, message: 'Applicant contact recorded.' });
             }
             case 'archive_applicant': {
                 const applicant = await getApplicantRecord(body.applicant_id || body.id);
                 const reason = String(body.reason || '').trim();
-                await (0, connection_js_1.query)("UPDATE hrms.applicants SET status = 'Archived' WHERE id = $1", [applicant.id]);
-                await (0, connection_js_1.query)(`INSERT INTO hrms.applicant_events (applicant_id, action, description, username)
+                await query("UPDATE hrms.applicants SET status = 'Archived' WHERE id = $1", [applicant.id]);
+                await query(`INSERT INTO hrms.applicant_events (applicant_id, action, description, username)
            VALUES ($1, 'archived', $2, $3)`, [applicant.id, reason || 'Applicant archived.', req.user?.email || null]);
                 return res.json({ success: true, message: 'Applicant archived successfully.' });
             }
             case 'restore_applicant': {
                 const applicant = await getApplicantRecord(body.applicant_id || body.id);
-                const priorRejection = await (0, connection_js_1.query)('SELECT 1 FROM hrms.applicant_rejections WHERE applicant_id = $1 LIMIT 1', [applicant.id]);
+                const priorRejection = await query('SELECT 1 FROM hrms.applicant_rejections WHERE applicant_id = $1 LIMIT 1', [applicant.id]);
                 const restoredStatus = priorRejection.rowCount ? 'Rejected' : 'Applied';
-                await (0, connection_js_1.query)('UPDATE hrms.applicants SET status = $1 WHERE id = $2', [restoredStatus, applicant.id]);
-                await (0, connection_js_1.query)(`INSERT INTO hrms.applicant_events (applicant_id, action, description, username)
+                await query('UPDATE hrms.applicants SET status = $1 WHERE id = $2', [restoredStatus, applicant.id]);
+                await query(`INSERT INTO hrms.applicant_events (applicant_id, action, description, username)
            VALUES ($1, 'restored', $2, $3)`, [applicant.id, `Applicant restored to ${restoredStatus}.`, req.user?.email || null]);
                 return res.json({ success: true, message: 'Applicant restored successfully.' });
             }
@@ -787,10 +748,10 @@ async function handleBridgeAction(req, res, next) {
                     return res.status(400).json({ success: false, message: 'A valid rejection stage and reason are required.' });
                 }
                 const futureInvited = body.invite_future === true || body.invite_future === '1' || body.invite_future === 'true';
-                const updated = await (0, connection_js_1.query)("UPDATE hrms.applicants SET status = 'Rejected' WHERE id = $1 RETURNING *", [applicant.id]);
-                await (0, connection_js_1.query)(`INSERT INTO hrms.applicant_rejections (applicant_id, stage, category, reason, rejected_by, future_invited)
+                const updated = await query("UPDATE hrms.applicants SET status = 'Rejected' WHERE id = $1 RETURNING *", [applicant.id]);
+                await query(`INSERT INTO hrms.applicant_rejections (applicant_id, stage, category, reason, rejected_by, future_invited)
            VALUES ($1, $2, $3, $4, $5, $6)`, [applicant.id, stage, body.category || null, reason, req.user?.email || null, futureInvited]);
-                await (0, connection_js_1.query)(`INSERT INTO hrms.applicant_events (applicant_id, action, description, username)
+                await query(`INSERT INTO hrms.applicant_events (applicant_id, action, description, username)
            VALUES ($1, 'rejected', $2, $3)`, [applicant.id, reason, req.user?.email || null]);
                 return res.json({
                     success: true,
@@ -808,7 +769,7 @@ async function handleBridgeAction(req, res, next) {
                     hrmsService.getAllApplicants()
                 ]);
                 const today = new Date().toISOString().slice(0, 10);
-                const proceeded = await (0, connection_js_1.query)("SELECT COUNT(*)::int AS count FROM hrms.applicants WHERE status = 'Final Interview'");
+                const proceeded = await query("SELECT COUNT(*)::int AS count FROM hrms.applicants WHERE status = 'Final Interview'");
                 return res.json({
                     success: true,
                     applicants,
@@ -824,8 +785,8 @@ async function handleBridgeAction(req, res, next) {
                 const [applicants, rejected, hired, rejectedThisMonth] = await Promise.all([
                     getInterviewApplicants('Final Interview', 'Final Interview'),
                     hrmsService.getAllApplicants(),
-                    (0, connection_js_1.query)("SELECT COUNT(*)::int AS count FROM hrms.applicants WHERE status = 'Hired' AND date_trunc('month', created_at) = date_trunc('month', NOW())"),
-                    (0, connection_js_1.query)("SELECT COUNT(*)::int AS count FROM hrms.applicant_rejections WHERE date_trunc('month', created_at) = date_trunc('month', NOW())")
+                    query("SELECT COUNT(*)::int AS count FROM hrms.applicants WHERE status = 'Hired' AND date_trunc('month', created_at) = date_trunc('month', NOW())"),
+                    query("SELECT COUNT(*)::int AS count FROM hrms.applicant_rejections WHERE date_trunc('month', created_at) = date_trunc('month', NOW())")
                 ]);
                 return res.json({
                     success: true,
@@ -849,20 +810,20 @@ async function handleBridgeAction(req, res, next) {
                 }
                 let interviewerName = String(body.interviewer || body.interviewer_name || '').trim() || null;
                 if (!interviewerName && /^\d+$/.test(String(body.interviewer_id || ''))) {
-                    const interviewer = await (0, connection_js_1.query)(`SELECT first_name, last_name FROM hrms.employees
+                    const interviewer = await query(`SELECT first_name, last_name FROM hrms.employees
              ORDER BY created_at DESC LIMIT 1 OFFSET $1`, [Number(body.interviewer_id) - 1]);
                     interviewerName = interviewer.rows[0]
                         ? `${interviewer.rows[0].first_name} ${interviewer.rows[0].last_name}`.trim()
                         : null;
                 }
-                const inserted = await (0, connection_js_1.query)(`INSERT INTO hrms.applicant_interviews
+                const inserted = await query(`INSERT INTO hrms.applicant_interviews
              (applicant_id, round, scheduled_at, interview_type, location, interviewer_name,
               interviewer_id, confirmation_deadline)
            VALUES ($1, $2, $3::timestamptz, $4, $5, $6, $7, NOW() + INTERVAL '3 days')
            RETURNING confirmation_deadline`, [applicant.id, round, scheduledAt, body.interview_type || null,
                     body.interview_location || null, interviewerName, body.interviewer_id ? String(body.interviewer_id) : null]);
-                await (0, connection_js_1.query)('UPDATE hrms.applicants SET status = $1 WHERE id = $2', [round, applicant.id]);
-                await (0, connection_js_1.query)(`INSERT INTO hrms.applicant_events (applicant_id, action, description, username)
+                await query('UPDATE hrms.applicants SET status = $1 WHERE id = $2', [round, applicant.id]);
+                await query(`INSERT INTO hrms.applicant_events (applicant_id, action, description, username)
            VALUES ($1, $2, $3, $4)`, [applicant.id, 'interview_scheduled', `${round} scheduled for ${scheduledAt}`, req.user?.email || null]);
                 return res.json({
                     success: true,
@@ -874,21 +835,21 @@ async function handleBridgeAction(req, res, next) {
             }
             case 'proceed_final_interview': {
                 const applicant = await getApplicantRecord(body.applicant_id || body.id);
-                await (0, connection_js_1.query)("UPDATE hrms.applicants SET status = 'Final Interview' WHERE id = $1", [applicant.id]);
-                await (0, connection_js_1.query)(`INSERT INTO hrms.applicant_events (applicant_id, action, description, username)
+                await query("UPDATE hrms.applicants SET status = 'Final Interview' WHERE id = $1", [applicant.id]);
+                await query(`INSERT INTO hrms.applicant_events (applicant_id, action, description, username)
            VALUES ($1, 'proceeded_to_final', 'Applicant proceeded to final interview.', $2)`, [applicant.id, req.user?.email || null]);
                 return res.json({ success: true, message: 'Applicant moved to Final Interview.' });
             }
             case 'hire_applicant': {
                 const applicant = await getApplicantRecord(body.applicant_id || body.id);
                 const employee = await hrmsService.hireApplicant(applicant.id);
-                await (0, connection_js_1.query)('UPDATE hrms.employees SET contract_type = $1 WHERE id = $2', [String(body.contract_type || 'Probationary'), employee.id]);
-                const onboarding = await (0, connection_js_1.query)(`INSERT INTO hrms.onboarding_records (employee_id, contract_type)
+                await query('UPDATE hrms.employees SET contract_type = $1 WHERE id = $2', [String(body.contract_type || 'Probationary'), employee.id]);
+                const onboarding = await query(`INSERT INTO hrms.onboarding_records (employee_id, contract_type)
            VALUES ($1, $2) RETURNING id`, [employee.id, String(body.contract_type || 'Probationary')]);
-                const employeeIndex = await (0, connection_js_1.query)(`SELECT row_number FROM (
+                const employeeIndex = await query(`SELECT row_number FROM (
              SELECT id, ROW_NUMBER() OVER (ORDER BY created_at DESC)::int AS row_number FROM hrms.employees
            ) numbered WHERE id = $1`, [employee.id]);
-                const onboardingIndex = await (0, connection_js_1.query)(`SELECT row_number FROM (
+                const onboardingIndex = await query(`SELECT row_number FROM (
              SELECT id, ROW_NUMBER() OVER (ORDER BY created_at DESC)::int AS row_number FROM hrms.onboarding_records
            ) numbered WHERE id = $1`, [onboarding.rows[0].id]);
                 return res.status(201).json({
@@ -932,7 +893,7 @@ async function handleBridgeAction(req, res, next) {
             }
             case 'page_job_postings': {
                 const [jobs, departments, positions, approvedRequests] = await Promise.all([
-                    (0, connection_js_1.query)(`WITH numbered AS (
+                    query(`WITH numbered AS (
                    SELECT j.*, ROW_NUMBER() OVER (ORDER BY j.created_at DESC)::int AS legacy_id,
                           COUNT(a.id)::int AS applicant_count
                    FROM hrms.job_postings j LEFT JOIN hrms.applicants a ON a.job_posting_id = j.id
@@ -943,7 +904,7 @@ async function handleBridgeAction(req, res, next) {
                  LEFT JOIN hrms.positions p ON p.id = n.position_id ORDER BY n.created_at DESC`),
                     hrmsService.getAllDepartments(),
                     hrmsService.getAllPositions(),
-                    (0, connection_js_1.query)(`WITH numbered AS (
+                    query(`WITH numbered AS (
                    SELECT v.*, ROW_NUMBER() OVER (ORDER BY v.created_at DESC)::int AS legacy_id
                    FROM hrms.vacancy_requests v
                  )
@@ -1021,7 +982,7 @@ async function handleBridgeAction(req, res, next) {
             }
             case 'job_posting_detail': {
                 const job = await getJobRecord(req.query.id ?? body.id);
-                const applicantRows = await (0, connection_js_1.query)('SELECT * FROM hrms.applicants WHERE job_posting_id = $1 ORDER BY created_at DESC', [job.id]);
+                const applicantRows = await query('SELECT * FROM hrms.applicants WHERE job_posting_id = $1 ORDER BY created_at DESC', [job.id]);
                 return res.json({
                     success: true,
                     posting: {
@@ -1072,8 +1033,8 @@ async function handleBridgeAction(req, res, next) {
                 if (!title)
                     return res.status(400).json({ success: false, message: 'Job title is required.' });
                 const intent = String(body.intent || 'draft');
-                const departmentId = await (0, connection_js_1.query)('SELECT id FROM hrms.departments WHERE lower(name) = lower($1) LIMIT 1', [String(body.department || '')]);
-                const positionId = await (0, connection_js_1.query)('SELECT id FROM hrms.positions WHERE lower(title) = lower($1) LIMIT 1', [String(body.position || '')]);
+                const departmentId = await query('SELECT id FROM hrms.departments WHERE lower(name) = lower($1) LIMIT 1', [String(body.department || '')]);
+                const positionId = await query('SELECT id FROM hrms.positions WHERE lower(title) = lower($1) LIMIT 1', [String(body.position || '')]);
                 const vacancyRequestId = String(body.vacancy_request_id || '').trim()
                     ? await getVacancyRequestRecord(body.vacancy_request_id)
                     : null;
@@ -1089,7 +1050,7 @@ async function handleBridgeAction(req, res, next) {
                 if (String(body.id || '').trim()) {
                     const existing = await getJobRecord(body.id);
                     const nextStatus = intent === 'publish' ? 'Open' : intent === 'draft' ? 'Draft' : existing.status;
-                    saved = await (0, connection_js_1.query)(`UPDATE hrms.job_postings SET title = $1, department_id = COALESCE($2, department_id),
+                    saved = await query(`UPDATE hrms.job_postings SET title = $1, department_id = COALESCE($2, department_id),
                position_id = COALESCE($3, position_id), job_type = $4, location = $5, description = $6,
                requirements = $7, salary_min = NULLIF($8, '')::numeric, salary_max = NULLIF($9, '')::numeric,
                status = $10, metadata = $11::jsonb
@@ -1100,7 +1061,7 @@ async function handleBridgeAction(req, res, next) {
                 }
                 else {
                     const status = intent === 'publish' ? 'Open' : 'Draft';
-                    saved = await (0, connection_js_1.query)(`INSERT INTO hrms.job_postings
+                    saved = await query(`INSERT INTO hrms.job_postings
                (title, department_id, position_id, job_type, location, description, requirements,
                 salary_min, salary_max, status, metadata)
              VALUES ($1, $2, $3, $4, $5, $6, $7, NULLIF($8, '')::numeric, NULLIF($9, '')::numeric, $10, $11::jsonb)
@@ -1118,19 +1079,19 @@ async function handleBridgeAction(req, res, next) {
                 const status = action === 'publish_job_posting' ? 'Open'
                     : action === 'close_job_posting' ? 'Closed'
                         : action === 'archive_job_posting' ? 'Archived' : 'Open';
-                const updated = await (0, connection_js_1.query)('UPDATE hrms.job_postings SET status = $1 WHERE id = $2 RETURNING *', [status, job.id]);
+                const updated = await query('UPDATE hrms.job_postings SET status = $1 WHERE id = $2 RETURNING *', [status, job.id]);
                 return res.json({ success: true, message: `Job posting ${status.toLowerCase()} successfully.`, posting: updated.rows[0] });
             }
             case 'delete_job_posting': {
                 const job = await getJobRecord(body.id);
-                await (0, connection_js_1.query)('DELETE FROM hrms.job_postings WHERE id = $1', [job.id]);
+                await query('DELETE FROM hrms.job_postings WHERE id = $1', [job.id]);
                 return res.json({ success: true, message: 'Job posting deleted successfully.' });
             }
             case 'page_vacancy_requests': {
                 const [departments, positions, requestRows, employeeProfile] = await Promise.all([
                     hrmsService.getAllDepartments(),
                     hrmsService.getAllPositions(),
-                    (0, connection_js_1.query)(`WITH numbered AS (
+                    query(`WITH numbered AS (
                    SELECT v.*, ROW_NUMBER() OVER (ORDER BY v.created_at DESC)::int AS legacy_id
                    FROM hrms.vacancy_requests v
                  )
@@ -1149,7 +1110,7 @@ async function handleBridgeAction(req, res, next) {
                  LEFT JOIN auth_core.users requester ON requester.id = n.requested_by
                  LEFT JOIN auth_core.users reviewer ON reviewer.id = n.reviewed_by`),
                     currentUser?.id
-                        ? (0, connection_js_1.query)('SELECT department_id, position_id FROM hrms.employees WHERE user_id = $1 LIMIT 1', [currentUser.id])
+                        ? query('SELECT department_id, position_id FROM hrms.employees WHERE user_id = $1 LIMIT 1', [currentUser.id])
                         : Promise.resolve({ rows: [] })
                 ]);
                 const departmentIndex = (id) => departments.findIndex((item) => item.id === id) + 1;
@@ -1217,7 +1178,7 @@ async function handleBridgeAction(req, res, next) {
                     return res.status(400).json({ success: false, message: 'Choose a valid department and position, enter a positive vacancy count, and provide a justification.' });
                 }
                 const requestNo = `VR-${Date.now()}`;
-                const saved = await (0, connection_js_1.query)(`INSERT INTO hrms.vacancy_requests
+                const saved = await query(`INSERT INTO hrms.vacancy_requests
              (request_no, department_id, position_id, vacancies, employment_type, justification,
               required_skills, qualifications, requested_date, notes, requested_by)
            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NULLIF($9, '')::date, $10, $11)
@@ -1233,7 +1194,7 @@ async function handleBridgeAction(req, res, next) {
                 if (decision === 'reject' && !String(body.reason || '').trim())
                     return res.status(400).json({ success: false, message: 'A rejection reason is required.' });
                 const status = decision === 'approve' ? 'Approved' : 'Rejected';
-                const saved = await (0, connection_js_1.query)(`UPDATE hrms.vacancy_requests SET status = $1, reviewed_by = $2, reviewed_at = NOW(),
+                const saved = await query(`UPDATE hrms.vacancy_requests SET status = $1, reviewed_by = $2, reviewed_at = NOW(),
              rejection_reason = $3 WHERE id = $4 AND status = 'Pending' RETURNING *`, [status, currentUser?.id || null, decision === 'reject' ? String(body.reason).trim() : null, requestId]);
                 if (!saved.rows[0])
                     return res.status(409).json({ success: false, message: 'Only pending vacancy requests can be reviewed.' });
@@ -1241,14 +1202,14 @@ async function handleBridgeAction(req, res, next) {
             }
             case 'cancel_vacancy_request': {
                 const requestId = await getVacancyRequestRecord(body.id);
-                const saved = await (0, connection_js_1.query)(`UPDATE hrms.vacancy_requests SET status = 'Cancelled', cancelled_at = NOW()
+                const saved = await query(`UPDATE hrms.vacancy_requests SET status = 'Cancelled', cancelled_at = NOW()
            WHERE id = $1 AND status = 'Pending' AND (requested_by = $2 OR $3 = TRUE) RETURNING *`, [requestId, currentUser?.id || null, ['superadmin', 'hr_admin'].includes(currentUser?.global_role || '')]);
                 if (!saved.rows[0])
                     return res.status(409).json({ success: false, message: 'This request cannot be cancelled by the current user.' });
                 return res.json({ success: true, message: 'Vacancy request cancelled.', request: saved.rows[0] });
             }
             case 'available_interviewers': {
-                const employees = await (0, connection_js_1.query)(`SELECT e.employee_no, e.first_name, e.last_name, p.title AS position,
+                const employees = await query(`SELECT e.employee_no, e.first_name, e.last_name, p.title AS position,
                   COALESCE(u.global_role, 'employee') AS role_name
            FROM hrms.employees e
            LEFT JOIN hrms.positions p ON p.id = e.position_id
@@ -1275,7 +1236,7 @@ async function handleBridgeAction(req, res, next) {
                 if (!/^\d+$/.test(id) || Number(id) < 1) {
                     return res.status(400).json({ success: false, message: 'A valid onboarding ID is required.' });
                 }
-                const match = await (0, connection_js_1.query)(`WITH numbered AS (
+                const match = await query(`WITH numbered AS (
              SELECT id, ROW_NUMBER() OVER (ORDER BY created_at DESC)::int AS legacy_id
              FROM hrms.onboarding_records
            ) SELECT id FROM numbered WHERE legacy_id = $1`, [Number(id)]);
@@ -1283,14 +1244,14 @@ async function handleBridgeAction(req, res, next) {
                     return res.status(404).json({ success: false, message: 'Onboarding record not found.' });
                 const fullName = String(body.full_name || '').trim().split(/\s+/);
                 const progress = Number(body.progress);
-                await (0, connection_js_1.query)(`UPDATE hrms.employees e SET
+                await query(`UPDATE hrms.employees e SET
              first_name = COALESCE(NULLIF($1, ''), e.first_name),
              last_name = COALESCE(NULLIF($2, ''), e.last_name),
              department_id = COALESCE((SELECT id FROM hrms.departments WHERE lower(name) = lower($3) LIMIT 1), e.department_id),
              position_id = COALESCE((SELECT id FROM hrms.positions WHERE lower(title) = lower($4) LIMIT 1), e.position_id),
              hire_date = COALESCE(NULLIF($5, '')::date, e.hire_date), updated_at = NOW()
            FROM hrms.onboarding_records o WHERE o.id = $6 AND e.id = o.employee_id`, [fullName[0] || '', fullName.slice(1).join(' '), String(body.department || ''), String(body.position || ''), String(body.date_hired || ''), match.rows[0].id]);
-                await (0, connection_js_1.query)(`UPDATE hrms.onboarding_records SET contract_type = COALESCE(NULLIF($1, ''), contract_type),
+                await query(`UPDATE hrms.onboarding_records SET contract_type = COALESCE(NULLIF($1, ''), contract_type),
              status = COALESCE(NULLIF($2, ''), status),
              progress = CASE WHEN $3::numeric BETWEEN 0 AND 100 AND $4::boolean THEN $3::numeric ELSE progress END,
              updated_at = NOW() WHERE id = $5`, [String(body.contract_type || ''), String(body.status || ''), Number.isFinite(progress) ? progress : -1,
@@ -1300,21 +1261,21 @@ async function handleBridgeAction(req, res, next) {
             case 'dashboard':
             case 'page_dashboard': {
                 const [empRes, deptRes, jobRes, appRes, recentApplicants, deptDistribution, recruitmentTrend, onboardingProgress] = await Promise.all([
-                    (0, connection_js_1.query)('SELECT COUNT(*)::int AS count FROM hrms.employees'),
-                    (0, connection_js_1.query)('SELECT COUNT(*)::int AS count FROM hrms.departments'),
-                    (0, connection_js_1.query)("SELECT COUNT(*)::int AS count FROM hrms.job_postings WHERE status = 'Open'"),
-                    (0, connection_js_1.query)('SELECT COUNT(*)::int AS count FROM hrms.applicants'),
+                    query('SELECT COUNT(*)::int AS count FROM hrms.employees'),
+                    query('SELECT COUNT(*)::int AS count FROM hrms.departments'),
+                    query("SELECT COUNT(*)::int AS count FROM hrms.job_postings WHERE status = 'Open'"),
+                    query('SELECT COUNT(*)::int AS count FROM hrms.applicants'),
                     hrmsService.getAllApplicants().then((rows) => rows.slice(0, 5).map(mapApplicant)),
-                    (0, connection_js_1.query)(`SELECT COALESCE(d.name, 'Unassigned') AS name, COUNT(e.id)::int AS count
+                    query(`SELECT COALESCE(d.name, 'Unassigned') AS name, COUNT(e.id)::int AS count
                  FROM hrms.departments d LEFT JOIN hrms.employees e ON e.department_id = d.id
                  GROUP BY d.name ORDER BY count DESC`),
-                    (0, connection_js_1.query)(`SELECT to_char(date_trunc('month', created_at), 'Mon') AS month,
+                    query(`SELECT to_char(date_trunc('month', created_at), 'Mon') AS month,
                         COUNT(*)::int AS applicants
                  FROM hrms.applicants
                  WHERE created_at >= date_trunc('month', NOW()) - INTERVAL '5 months'
                  GROUP BY date_trunc('month', created_at)
                  ORDER BY date_trunc('month', created_at)`),
-                    (0, connection_js_1.query)(`WITH numbered AS (
+                    query(`WITH numbered AS (
                    SELECT o.*, ROW_NUMBER() OVER (ORDER BY o.created_at DESC)::int AS legacy_id
                    FROM hrms.onboarding_records o
                  ) SELECT n.legacy_id AS id, e.employee_no, concat_ws(' ', e.first_name, e.last_name) AS name,
@@ -1354,7 +1315,7 @@ async function handleBridgeAction(req, res, next) {
                 const [schedules, logs, openResult, upcoming] = await Promise.all([
                     wfmService.getSchedules({ employeeId: employee.id, fromDate: from, toDate: to }),
                     wfmService.getAttendanceLogs({ employeeId: employee.id, fromDate: from, toDate: to }),
-                    (0, connection_js_1.query)('SELECT date, time_in FROM wfm.attendance_logs WHERE employee_id=$1 AND time_in IS NOT NULL AND time_out IS NULL ORDER BY date DESC LIMIT 1', [employee.id]),
+                    query('SELECT date, time_in FROM wfm.attendance_logs WHERE employee_id=$1 AND time_in IS NOT NULL AND time_out IS NULL ORDER BY date DESC LIMIT 1', [employee.id]),
                     wfmService.getSchedules({ employeeId: employee.id, fromDate: today, toDate: bridgeIsoDate(new Date(Date.now() + 30 * 86400000)) })
                 ]);
                 const scheduleByDate = new Map(schedules.map((row) => [bridgeIsoDate(new Date(row.schedule_date)), row]));
@@ -1421,7 +1382,7 @@ async function handleBridgeAction(req, res, next) {
                 const employee = await findEmployeeForUser(currentUser);
                 if (!employee)
                     return res.json({ success: true, employee: null, today: bridgeIsoDate(new Date()), types: [], requests: [], balances: [] });
-                const result = await (0, connection_js_1.query)(`SELECT r.*, u.full_name AS reviewed_by_name
+                const result = await query(`SELECT r.*, u.full_name AS reviewed_by_name
           FROM wfm.leave_requests r LEFT JOIN auth_core.users u ON u.id=r.approved_by
           WHERE r.employee_id=$1 ORDER BY r.created_at DESC`, [employee.id]);
                 const requests = result.rows.map((row, index) => ({ id: row.id, request_no: `LV-${String(index + 1).padStart(5, '0')}`,
@@ -1554,7 +1515,7 @@ async function handleBridgeAction(req, res, next) {
                 const sortKey = String(req.query.sort || body.sort || Object.keys(config.sort)[0]);
                 const sortColumn = config.sort[sortKey] || Object.values(config.sort)[0];
                 const order = String(req.query.order || body.order || 'desc').toLowerCase() === 'asc' ? 'ASC' : 'DESC';
-                const result = await (0, connection_js_1.query)(`SELECT ${config.fields} ${config.fromTable}
+                const result = await query(`SELECT ${config.fields} ${config.fromTable}
           ${conditions.length ? `WHERE ${conditions.join(' AND ')}` : ''}
           ORDER BY ${sortColumn} ${order} LIMIT 200`, params);
                 const columns = config.columns.map(([key, label, kind]) => ({ key, label, kind }));
@@ -1578,7 +1539,7 @@ async function handleBridgeAction(req, res, next) {
             }
             case 'page_announcements': {
                 const [rows, departments] = await Promise.all([
-                    (0, connection_js_1.query)(`SELECT a.id, a.title, a.summary, a.cover_image, a.body, a.published_at, a.end_at,
+                    query(`SELECT a.id, a.title, a.summary, a.cover_image, a.body, a.published_at, a.end_at,
                         CASE WHEN a.status = 'Published' AND a.end_at IS NOT NULL AND a.end_at <= NOW() THEN 'Ended'
                              WHEN a.status = 'Published' AND a.published_at > NOW() THEN 'Scheduled'
                              ELSE a.status END AS status,
@@ -1594,7 +1555,7 @@ async function handleBridgeAction(req, res, next) {
                     departments: departments.map((department) => ({ id: department.id, name: department.name })) });
             }
             case 'dashboard_announcements': {
-                const result = await (0, connection_js_1.query)(`SELECT a.id, a.title, a.summary, a.body, a.cover_image, a.published_at,
+                const result = await query(`SELECT a.id, a.title, a.summary, a.body, a.cover_image, a.published_at,
                                       creator.full_name AS created_by_name
           FROM hrms.announcements a LEFT JOIN auth_core.users creator ON creator.id=a.created_by
           WHERE a.status='Published' AND a.show_on_dashboard=TRUE AND a.published_at <= NOW()
@@ -1609,7 +1570,7 @@ async function handleBridgeAction(req, res, next) {
                 const id = Number(req.query.id || body.id);
                 if (!Number.isSafeInteger(id) || id < 1)
                     return res.status(400).json({ success: false, message: 'A valid announcement ID is required.' });
-                const result = await (0, connection_js_1.query)(`SELECT a.id, a.title, a.summary, a.body, a.cover_image, a.published_at,
+                const result = await query(`SELECT a.id, a.title, a.summary, a.body, a.cover_image, a.published_at,
                                       creator.full_name AS created_by_name
           FROM hrms.announcements a LEFT JOIN auth_core.users creator ON creator.id=a.created_by
           WHERE a.id=$1 AND a.status='Published' AND a.published_at <= NOW()
@@ -1639,7 +1600,7 @@ async function handleBridgeAction(req, res, next) {
                     scopedDepartments = [];
                 const scopeAll = ['1', 'true', 'on'].includes(String(body.scope_all).toLowerCase());
                 const isDraft = ['1', 'true', 'on'].includes(String(body.is_draft).toLowerCase()) || String(body.status).toLowerCase() === 'draft';
-                const result = await (0, connection_js_1.query)(`INSERT INTO hrms.announcements
+                const result = await query(`INSERT INTO hrms.announcements
              (title, summary, body, cover_image, published_at, end_at, status, show_on_dashboard,
               scope_all, scope_departments, created_by, updated_by)
            VALUES ($1,$2,$3,NULLIF($4,''),COALESCE(NULLIF($5,'')::timestamptz,NOW()),NULLIF($6,'')::timestamptz,
@@ -1665,7 +1626,7 @@ async function handleBridgeAction(req, res, next) {
                 }
                 if (!Array.isArray(scopedDepartments))
                     scopedDepartments = [];
-                const result = await (0, connection_js_1.query)(`UPDATE hrms.announcements SET title=$1, summary=$2, body=$3, cover_image=NULLIF($4,''),
+                const result = await query(`UPDATE hrms.announcements SET title=$1, summary=$2, body=$3, cover_image=NULLIF($4,''),
              published_at=COALESCE(NULLIF($5,'')::timestamptz,published_at), end_at=NULLIF($6,'')::timestamptz,
              show_on_dashboard=$7, scope_all=$8, scope_departments=$9, updated_by=$10, updated_at=NOW()
            WHERE id=$11 AND status NOT IN ('Withdrawn') RETURNING id`, [String(body.title || '').trim(), String(body.summary || '').trim(), String(body.body || '').trim(),
@@ -1679,7 +1640,7 @@ async function handleBridgeAction(req, res, next) {
             }
             case 'publish_announcement': {
                 const id = Number(body.id);
-                const result = await (0, connection_js_1.query)(`UPDATE hrms.announcements SET status='Published', withdrawn_at=NULL,
+                const result = await query(`UPDATE hrms.announcements SET status='Published', withdrawn_at=NULL,
           published_at=CASE WHEN published_at < NOW() AND status='Draft' THEN NOW() ELSE published_at END,
           updated_by=$1, updated_at=NOW() WHERE id=$2 AND status NOT IN ('Withdrawn','Ended') RETURNING id`, [currentUser?.id || null, id]);
                 if (!result.rows[0])
@@ -1687,14 +1648,14 @@ async function handleBridgeAction(req, res, next) {
                 return res.json({ success: true, message: 'Announcement published successfully.' });
             }
             case 'withdraw_announcement': {
-                const result = await (0, connection_js_1.query)(`UPDATE hrms.announcements SET status='Withdrawn', withdrawn_at=NOW(),
+                const result = await query(`UPDATE hrms.announcements SET status='Withdrawn', withdrawn_at=NOW(),
           updated_by=$1, updated_at=NOW() WHERE id=$2 AND status='Published' RETURNING id`, [currentUser?.id || null, Number(body.id)]);
                 if (!result.rows[0])
                     return res.status(404).json({ success: false, message: 'Published announcement not found.' });
                 return res.json({ success: true, message: 'Announcement withdrawn successfully.' });
             }
             case 'copy_announcement': {
-                const result = await (0, connection_js_1.query)(`INSERT INTO hrms.announcements
+                const result = await query(`INSERT INTO hrms.announcements
           (title, summary, body, cover_image, published_at, end_at, status, show_on_dashboard, scope_all, scope_departments, created_by, updated_by)
           SELECT title || ' (Copy)', summary, body, cover_image, NOW(), end_at, 'Draft', show_on_dashboard, scope_all,
                  scope_departments, $1, $1 FROM hrms.announcements WHERE id=$2 RETURNING id`, [currentUser?.id || null, Number(body.id)]);
@@ -1703,7 +1664,7 @@ async function handleBridgeAction(req, res, next) {
                 return res.json({ success: true, id: result.rows[0].id, message: 'Announcement copied as a draft.' });
             }
             case 'delete_announcement': {
-                const result = await (0, connection_js_1.query)(`DELETE FROM hrms.announcements WHERE id=$1 AND status IN ('Draft','Scheduled','Not Started') RETURNING id`, [Number(body.id)]);
+                const result = await query(`DELETE FROM hrms.announcements WHERE id=$1 AND status IN ('Draft','Scheduled','Not Started') RETURNING id`, [Number(body.id)]);
                 if (!result.rows[0])
                     return res.status(404).json({ success: false, message: 'Announcement not found or cannot be deleted.' });
                 return res.json({ success: true, message: 'Announcement deleted successfully.' });
@@ -1717,7 +1678,7 @@ async function handleBridgeAction(req, res, next) {
                 const validIds = ids.map((id) => Number(id)).filter((id) => Number.isSafeInteger(id) && id > 0);
                 if (!validIds.length)
                     return res.status(400).json({ success: false, message: 'Select at least one valid announcement.' });
-                const deleted = await (0, connection_js_1.query)(`DELETE FROM hrms.announcements WHERE id=ANY($1::bigint[])
+                const deleted = await query(`DELETE FROM hrms.announcements WHERE id=ANY($1::bigint[])
           AND status IN ('Draft','Scheduled','Not Started') RETURNING id`, [validIds]);
                 const deletedIds = deleted.rows.map((row) => Number(row.id));
                 const skipped = Object.fromEntries(validIds.filter((id) => !deletedIds.includes(id)).map((id) => [id, 'Announcement cannot be deleted in its current status.']));
@@ -1725,7 +1686,7 @@ async function handleBridgeAction(req, res, next) {
             }
             case 'page_user_directory': {
                 const [users, departments, positions, roleRows] = await Promise.all([
-                    (0, connection_js_1.query)(`SELECT u.id, COALESCE(u.username,u.email) AS username, u.email, u.full_name, u.global_role,
+                    query(`SELECT u.id, COALESCE(u.username,u.email) AS username, u.email, u.full_name, u.global_role,
                         u.is_active, u.created_at, u.phone_number,
                         e.id AS employee_id, e.employee_no, e.first_name, e.last_name,
                         e.hire_date, d.name AS department, p.title AS position
@@ -1736,7 +1697,7 @@ async function handleBridgeAction(req, res, next) {
                  ORDER BY u.created_at DESC`),
                     hrmsService.getAllDepartments(),
                     hrmsService.getAllPositions(),
-                    (0, connection_js_1.query)('SELECT DISTINCT global_role FROM auth_core.users ORDER BY global_role')
+                    query('SELECT DISTINCT global_role FROM auth_core.users ORDER BY global_role')
                 ]);
                 const roleNames = [...new Set(['superadmin', 'hr_admin', 'payroll_officer', 'fleet_manager', 'driver', 'employee',
                         ...roleRows.rows.map((row) => String(row.global_role || '').toLowerCase())].filter(Boolean))];
@@ -1772,7 +1733,7 @@ async function handleBridgeAction(req, res, next) {
             }
             case 'page_register_user': {
                 const [employees, departments, positions] = await Promise.all([
-                    (0, connection_js_1.query)(`SELECT e.id, e.employee_no, e.first_name, e.last_name, e.email, e.phone AS mobile_number,
+                    query(`SELECT e.id, e.employee_no, e.first_name, e.last_name, e.email, e.phone AS mobile_number,
                         e.gender, e.birth_date AS date_of_birth, e.address, e.employment_status,
                         e.contract_type, e.hire_date AS date_hired, e.created_at,
                         concat_ws(' ', e.first_name, e.last_name) AS full_name,
@@ -1814,22 +1775,22 @@ async function handleBridgeAction(req, res, next) {
                 if (!employeeId || !firstName || !lastName || !/^\S+@\S+\.\S+$/.test(email) || !mobile || !role) {
                     return res.status(400).json({ success: false, message: 'Complete the employee, name, email, mobile number, and role fields.' });
                 }
-                const employeeResult = await (0, connection_js_1.query)(`SELECT id, employee_no, first_name, last_name, hire_date, user_id
+                const employeeResult = await query(`SELECT id, employee_no, first_name, last_name, hire_date, user_id
           FROM hrms.employees WHERE id::text=$1`, [employeeId]);
                 const employee = employeeResult.rows[0];
                 if (!employee)
                     return res.status(404).json({ success: false, message: 'The selected employee record was not found.' });
                 if (employee.user_id)
                     return res.status(409).json({ success: false, message: 'This employee already has a system account.' });
-                const emailExists = await (0, connection_js_1.query)('SELECT id FROM auth_core.users WHERE lower(email)=lower($1)', [email]);
+                const emailExists = await query('SELECT id FROM auth_core.users WHERE lower(email)=lower($1)', [email]);
                 if (emailExists.rows[0])
                     return res.status(409).json({ success: false, message: 'An account with this email already exists.' });
                 const hireDate = employee.hire_date ? new Date(employee.hire_date) : new Date();
                 const month = String(hireDate.getUTCMonth() + 1).padStart(2, '0');
                 const defaultPassword = `${String(lastName).slice(0, 2).toLowerCase()}${month}${hireDate.getUTCFullYear()}`;
-                const passwordHash = await bcryptjs_1.default.hash(defaultPassword, 10);
+                const passwordHash = await bcrypt.hash(defaultPassword, 10);
                 const fullName = `${firstName} ${String(body.middle_name || '').trim()} ${lastName}`.replace(/\s+/g, ' ').trim();
-                const client = await (0, connection_js_1.getClient)();
+                const client = await getClient();
                 let userId;
                 try {
                     await client.query('BEGIN');
@@ -1855,10 +1816,13 @@ async function handleBridgeAction(req, res, next) {
                 }
                 let emailSent = false;
                 let emailError = null;
+                const emailText = `Hello ${fullName}, your system account is ready. Username: ${employee.employee_no}. Default password: ${defaultPassword}. Please sign in and change this password.`;
                 try {
                     const result = await emailService.sendSensitiveEmail({
-                        to: email, subject: 'Your Archon Nell system account',
-                        text: `Hello ${fullName}, your system account is ready. Username: ${employee.employee_no}. Default password: ${defaultPassword}. Please sign in and change this password.`
+                        to: email,
+                        subject: 'Your Archon Nell system account',
+                        text: emailText,
+                        html: `<p>${emailText}</p>`
                     });
                     emailSent = result.success;
                     if (!result.success)
@@ -1867,7 +1831,7 @@ async function handleBridgeAction(req, res, next) {
                 catch (error) {
                     emailError = error?.message || 'The account was created, but the credentials email could not be sent.';
                 }
-                await (0, connection_js_1.query)(`INSERT INTO auth_core.audit_logs (user_id,module,action,resource_id,details)
+                await query(`INSERT INTO auth_core.audit_logs (user_id,module,action,resource_id,details)
           VALUES ($1,'user_management','SYSTEM_USER_REGISTERED',$2,$3)`, [currentUser.id, userId, JSON.stringify({ employee_no: employee.employee_no, email, role })]);
                 return res.status(201).json({ success: true, message: 'System user registered successfully.',
                     username: employee.employee_no, default_password: defaultPassword, employee_no: employee.employee_no,
@@ -1888,12 +1852,12 @@ async function handleBridgeAction(req, res, next) {
                 }
                 if (!roleById[roleId])
                     return res.status(400).json({ success: false, message: 'A valid system role is required.' });
-                const existing = await (0, connection_js_1.query)('SELECT id FROM auth_core.users WHERE id::text=$1', [userId]);
+                const existing = await query('SELECT id FROM auth_core.users WHERE id::text=$1', [userId]);
                 if (!existing.rows[0])
                     return res.status(404).json({ success: false, message: 'System user not found.' });
-                await (0, connection_js_1.query)(`UPDATE auth_core.users SET email=$1, full_name=$2, phone_number=NULLIF($3,''),
+                await query(`UPDATE auth_core.users SET email=$1, full_name=$2, phone_number=NULLIF($3,''),
                        global_role=$4, updated_at=NOW() WHERE id=$5`, [email, `${firstName} ${lastName}`.trim(), mobile, roleById[roleId], existing.rows[0].id]);
-                await (0, connection_js_1.query)(`UPDATE hrms.employees e SET first_name=$1, last_name=$2, email=$3, phone=NULLIF($4,''),
+                await query(`UPDATE hrms.employees e SET first_name=$1, last_name=$2, email=$3, phone=NULLIF($4,''),
                        department_id=COALESCE((SELECT id FROM hrms.departments WHERE lower(name)=lower(NULLIF($5,'')) LIMIT 1), e.department_id),
                        position_id=COALESCE((SELECT id FROM hrms.positions WHERE lower(title)=lower(NULLIF($6,'')) LIMIT 1), e.position_id),
                        updated_at=NOW()
@@ -1916,15 +1880,15 @@ async function handleBridgeAction(req, res, next) {
                     return res.status(400).json({ success: false, message: 'New password and confirmation do not match.' });
                 if (nextPassword === currentPassword)
                     return res.status(400).json({ success: false, message: 'New password must be different from your current password.' });
-                const userResult = await (0, connection_js_1.query)('SELECT password_hash FROM auth_core.users WHERE id=$1 AND is_active=TRUE', [currentUser.id]);
+                const userResult = await query('SELECT password_hash FROM auth_core.users WHERE id=$1 AND is_active=TRUE', [currentUser.id]);
                 if (!userResult.rows[0])
                     return res.status(401).json({ success: false, message: 'Your account could not be verified.' });
-                const matches = await bcryptjs_1.default.compare(currentPassword, userResult.rows[0].password_hash);
+                const matches = await bcrypt.compare(currentPassword, userResult.rows[0].password_hash);
                 if (!matches)
                     return res.status(400).json({ success: false, message: 'Current password is incorrect.' });
-                const passwordHash = await bcryptjs_1.default.hash(nextPassword, 10);
-                await (0, connection_js_1.query)('UPDATE auth_core.users SET password_hash=$1, updated_at=NOW() WHERE id=$2', [passwordHash, currentUser.id]);
-                await (0, connection_js_1.query)(`INSERT INTO auth_core.audit_logs (user_id, module, action, details)
+                const passwordHash = await bcrypt.hash(nextPassword, 10);
+                await query('UPDATE auth_core.users SET password_hash=$1, updated_at=NOW() WHERE id=$2', [passwordHash, currentUser.id]);
+                await query(`INSERT INTO auth_core.audit_logs (user_id, module, action, details)
           VALUES ($1, 'auth', 'PASSWORD_CHANGED', $2)`, [currentUser.id, JSON.stringify({ status: 'Success' })]);
                 return res.json({ success: true, message: 'Your password has been changed successfully.' });
             }
@@ -1938,7 +1902,7 @@ async function handleBridgeAction(req, res, next) {
                     id: index + 1, permission_name: permission,
                     description: permission.replace(/_/g, ' ').replace(/\b\w/g, (letter) => letter.toUpperCase())
                 }));
-                const counts = await (0, connection_js_1.query)('SELECT global_role, COUNT(*)::int AS user_count FROM auth_core.users GROUP BY global_role');
+                const counts = await query('SELECT global_role, COUNT(*)::int AS user_count FROM auth_core.users GROUP BY global_role');
                 const roleLabels = [
                     ['superadmin', 'Super Admin'], ['hr_admin', 'HR Admin'], ['payroll_officer', 'Payroll Officer'],
                     ['fleet_manager', 'Fleet Manager'], ['driver', 'Driver'], ['employee', 'Employee']
@@ -1992,13 +1956,13 @@ async function handleBridgeAction(req, res, next) {
                 const where = conditions.length ? `WHERE ${conditions.join(' AND ')}` : '';
                 const filterParams = [...params];
                 const [count, logs, options] = await Promise.all([
-                    (0, connection_js_1.query)(`SELECT COUNT(*)::int AS total FROM auth_core.audit_logs a LEFT JOIN auth_core.users u ON u.id = a.user_id ${where}`, filterParams),
-                    (0, connection_js_1.query)(`SELECT a.id, a.user_id, u.email AS username, a.action, a.module,
+                    query(`SELECT COUNT(*)::int AS total FROM auth_core.audit_logs a LEFT JOIN auth_core.users u ON u.id = a.user_id ${where}`, filterParams),
+                    query(`SELECT a.id, a.user_id, u.email AS username, a.action, a.module,
                         COALESCE(a.details->>'description', a.details->>'message', a.details->>'reason', a.resource_id) AS description,
                         COALESCE(a.details->>'status', 'Success') AS status, a.ip_address, a.created_at
                  FROM auth_core.audit_logs a LEFT JOIN auth_core.users u ON u.id = a.user_id
                  ${where} ORDER BY ${sortColumn} ${direction} LIMIT ${pageSize} OFFSET ${(page - 1) * pageSize}`, filterParams),
-                    (0, connection_js_1.query)(`SELECT ARRAY(SELECT DISTINCT action FROM auth_core.audit_logs ORDER BY action) AS actions,
+                    query(`SELECT ARRAY(SELECT DISTINCT action FROM auth_core.audit_logs ORDER BY action) AS actions,
                         ARRAY(SELECT DISTINCT module FROM auth_core.audit_logs ORDER BY module) AS modules,
                         ARRAY(SELECT DISTINCT COALESCE(details->>'status', 'Success') FROM auth_core.audit_logs
                               ORDER BY COALESCE(details->>'status', 'Success')) AS statuses`)

@@ -1949,10 +1949,13 @@ export async function handleBridgeAction(req: Request, res: Response, next: Next
         }
         let emailSent = false;
         let emailError: string | null = null;
+        const emailText = `Hello ${fullName}, your system account is ready. Username: ${employee.employee_no}. Default password: ${defaultPassword}. Please sign in and change this password.`;
         try {
           const result = await emailService.sendSensitiveEmail({
-            to: email, subject: 'Your Archon Nell system account',
-            text: `Hello ${fullName}, your system account is ready. Username: ${employee.employee_no}. Default password: ${defaultPassword}. Please sign in and change this password.`
+            to: email,
+            subject: 'Your Archon Nell system account',
+            text: emailText,
+            html: `<p>${emailText}</p>`
           });
           emailSent = result.success;
           if (!result.success) emailError = result.error || 'The account was created, but the credentials email could not be delivered.';

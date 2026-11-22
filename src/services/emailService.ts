@@ -31,7 +31,7 @@ function getTransporter(): MailTransporter | null {
 export interface SendMailOptions {
   to: string;
   subject: string;
-  html: string;
+  html?: string;
   text?: string;
 }
 
