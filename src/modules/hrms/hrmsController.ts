@@ -68,6 +68,38 @@ export async function getEmployees(req: Request, res: Response, next: NextFuncti
   }
 }
 
+export async function exportEmployees(req: Request, res: Response, next: NextFunction) {
+  try {
+    const employees = await hrmsService.getAllEmployees();
+    const columns: Array<[string, (employee: any) => unknown]> = [
+      ['Employee No', (employee) => employee.employee_no],
+      ['First Name', (employee) => employee.first_name],
+      ['Last Name', (employee) => employee.last_name],
+      ['Email', (employee) => employee.email],
+      ['Phone', (employee) => employee.phone],
+      ['Department', (employee) => employee.department_name],
+      ['Position', (employee) => employee.position_title],
+      ['Employment Status', (employee) => employee.employment_status],
+      ['Hire Date', (employee) => employee.hire_date]
+    ];
+    const escapeCsv = (value: unknown) => {
+      let text = value == null ? '' : String(value);
+      if (/^[=+\-@\t\r]/.test(text)) text = `'${text}`;
+      return `"${text.replace(/"/g, '""')}"`;
+    };
+    const csv = [
+      columns.map(([label]) => escapeCsv(label)).join(','),
+      ...employees.map((employee) => columns.map(([, getValue]) => escapeCsv(getValue(employee))).join(','))
+    ].join('\r\n');
+
+    res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+    res.setHeader('Content-Disposition', 'attachment; filename="employees.csv"');
+    return res.send(`\uFEFF${csv}`);
+  } catch (err) {
+    next(err);
+  }
+}
+
 export async function getNextEmployeeNo(req: Request, res: Response, next: NextFunction) {
   try {
     const nextNo = await hrmsService.getNextEmployeeNumber();

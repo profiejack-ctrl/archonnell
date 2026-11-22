@@ -20,6 +20,7 @@ CREATE SCHEMA IF NOT EXISTS shop;
 -- ------------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS auth_core.users (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    username VARCHAR(100) UNIQUE,
     email VARCHAR(255) UNIQUE NOT NULL,
     password_hash VARCHAR(255) NOT NULL,
     full_name VARCHAR(255) NOT NULL,
@@ -30,6 +31,10 @@ CREATE TABLE IF NOT EXISTS auth_core.users (
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
+
+ALTER TABLE auth_core.users ADD COLUMN IF NOT EXISTS username VARCHAR(100);
+UPDATE auth_core.users SET username = LOWER(email) WHERE username IS NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS idx_auth_users_username ON auth_core.users(LOWER(username));
 
 CREATE TABLE IF NOT EXISTS auth_core.sessions (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -104,6 +109,9 @@ CREATE TABLE IF NOT EXISTS hrms.employees (
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
 
+ALTER TABLE hrms.employees ADD COLUMN IF NOT EXISTS gender VARCHAR(50);
+ALTER TABLE hrms.employees ADD COLUMN IF NOT EXISTS contract_type VARCHAR(100) DEFAULT 'Full-Time';
+
 CREATE TABLE IF NOT EXISTS hrms.job_postings (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     department_id UUID REFERENCES hrms.departments(id) ON DELETE SET NULL,
@@ -118,6 +126,52 @@ CREATE TABLE IF NOT EXISTS hrms.job_postings (
     status VARCHAR(50) DEFAULT 'Open', -- 'Open', 'Closed', 'Draft'
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
+
+ALTER TABLE hrms.job_postings
+    ADD COLUMN IF NOT EXISTS metadata JSONB NOT NULL DEFAULT '{}';
+
+CREATE TABLE IF NOT EXISTS hrms.vacancy_requests (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    request_no VARCHAR(50) UNIQUE NOT NULL,
+    department_id UUID NOT NULL REFERENCES hrms.departments(id),
+    position_id UUID NOT NULL REFERENCES hrms.positions(id),
+    vacancies INT NOT NULL CHECK (vacancies > 0),
+    employment_type VARCHAR(100) NOT NULL,
+    justification TEXT NOT NULL,
+    required_skills TEXT NOT NULL DEFAULT '',
+    qualifications TEXT NOT NULL DEFAULT '',
+    requested_date DATE NOT NULL DEFAULT CURRENT_DATE,
+    notes TEXT NOT NULL DEFAULT '',
+    status VARCHAR(50) NOT NULL DEFAULT 'Pending',
+    requested_by UUID REFERENCES auth_core.users(id) ON DELETE SET NULL,
+    reviewed_by UUID REFERENCES auth_core.users(id) ON DELETE SET NULL,
+    reviewed_at TIMESTAMP WITH TIME ZONE,
+    rejection_reason TEXT,
+    cancelled_at TIMESTAMP WITH TIME ZONE,
+    created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS hrms.announcements (
+    id BIGSERIAL PRIMARY KEY,
+    title VARCHAR(255) NOT NULL,
+    summary TEXT,
+    body TEXT NOT NULL,
+    cover_image TEXT,
+    published_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
+    end_at TIMESTAMP WITH TIME ZONE,
+    status VARCHAR(30) NOT NULL DEFAULT 'Draft',
+    show_on_dashboard BOOLEAN NOT NULL DEFAULT TRUE,
+    scope_all BOOLEAN NOT NULL DEFAULT TRUE,
+    scope_departments TEXT[] NOT NULL DEFAULT '{}',
+    withdrawn_at TIMESTAMP WITH TIME ZONE,
+    created_by UUID REFERENCES auth_core.users(id) ON DELETE SET NULL,
+    updated_by UUID REFERENCES auth_core.users(id) ON DELETE SET NULL,
+    created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_hrms_announcements_status_date
+    ON hrms.announcements(status, published_at DESC);
 
 CREATE TABLE IF NOT EXISTS hrms.applicants (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -135,6 +189,46 @@ CREATE TABLE IF NOT EXISTS hrms.applicants (
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
 
+CREATE TABLE IF NOT EXISTS hrms.applicant_rejections (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    applicant_id UUID NOT NULL REFERENCES hrms.applicants(id) ON DELETE CASCADE,
+    stage VARCHAR(50) NOT NULL,
+    category VARCHAR(255),
+    reason TEXT NOT NULL,
+    rejected_by VARCHAR(255),
+    future_invited BOOLEAN NOT NULL DEFAULT FALSE,
+    created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_hrms_applicant_rejections_latest
+    ON hrms.applicant_rejections(applicant_id, created_at DESC);
+
+CREATE TABLE IF NOT EXISTS hrms.applicant_interviews (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    applicant_id UUID NOT NULL REFERENCES hrms.applicants(id) ON DELETE CASCADE,
+    round VARCHAR(50) NOT NULL,
+    scheduled_at TIMESTAMP WITH TIME ZONE NOT NULL,
+    interview_type VARCHAR(100),
+    location TEXT,
+    interviewer_name VARCHAR(255),
+    interviewer_id VARCHAR(255),
+    status VARCHAR(50) NOT NULL DEFAULT 'Scheduled',
+    confirmation_deadline TIMESTAMP WITH TIME ZONE,
+    created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_hrms_applicant_interviews_latest
+    ON hrms.applicant_interviews(applicant_id, round, created_at DESC);
+
+CREATE TABLE IF NOT EXISTS hrms.applicant_events (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    applicant_id UUID NOT NULL REFERENCES hrms.applicants(id) ON DELETE CASCADE,
+    action VARCHAR(100) NOT NULL,
+    description TEXT NOT NULL,
+    username VARCHAR(255),
+    created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW()
+);
+
 CREATE TABLE IF NOT EXISTS hrms.onboarding_tasks (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     employee_id UUID REFERENCES hrms.employees(id) ON DELETE CASCADE,
@@ -143,6 +237,16 @@ CREATE TABLE IF NOT EXISTS hrms.onboarding_tasks (
     is_completed BOOLEAN DEFAULT FALSE,
     completed_at TIMESTAMP WITH TIME ZONE,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS hrms.onboarding_records (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    employee_id UUID NOT NULL UNIQUE REFERENCES hrms.employees(id) ON DELETE CASCADE,
+    contract_type VARCHAR(100) NOT NULL DEFAULT 'Probationary',
+    status VARCHAR(100) NOT NULL DEFAULT 'In Progress',
+    progress NUMERIC(5, 2) NOT NULL DEFAULT 0,
+    created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW()
 );
 
 -- ------------------------------------------------------------------------------

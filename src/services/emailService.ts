@@ -74,6 +74,25 @@ export async function sendEmail(options: SendMailOptions): Promise<{ success: bo
   }
 }
 
+/** Send credential or other sensitive mail without logging its contents on fallback/failure. */
+export async function sendSensitiveEmail(options: SendMailOptions): Promise<{ success: boolean; error?: string }> {
+  const mailer = getTransporter();
+  if (!mailer) return { success: false, error: 'SMTP is not configured; credentials were not emailed.' };
+  try {
+    await mailer.sendMail({
+      from: `"${env.SMTP_FROM_NAME}" <${env.SMTP_FROM_EMAIL}>`,
+      to: options.to,
+      subject: options.subject,
+      text: options.text,
+      html: options.html
+    });
+    return { success: true };
+  } catch {
+    console.error(`[EmailService] Sensitive email delivery failed for ${options.to}.`);
+    return { success: false, error: 'Credential email delivery failed.' };
+  }
+}
+
 /**
  * Sends an Archon Nell branded One-Time Password (OTP) verification email.
  */

@@ -7,6 +7,8 @@ import { errorHandler } from './middleware/errorHandler.js';
 import { checkDatabaseHealth } from './db/connection.js';
 import { swaggerDocument } from './config/swagger.js';
 import apiRouter from './routes/index.js';
+import { authenticate } from './middleware/authenticate.js';
+import { exportEmployees } from './modules/hrms/hrmsController.js';
 export const app = express();
 // Base Middlewares
 app.use(corsMiddleware);
@@ -58,6 +60,8 @@ app.use('/api/docs', swaggerUi.serve, swaggerUi.setup(swaggerDocument, {
 app.get('/docs', (req, res) => {
     res.redirect('/api/docs');
 });
+// Legacy HRMS frontend download URL. Keep this authenticated because it exports employee data.
+app.get('/export-employees.php', authenticate, exportEmployees);
 // Mount Central API Routes
 app.use('/api/v1', apiRouter);
 // 404 Handler

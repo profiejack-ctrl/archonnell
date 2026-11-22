@@ -5,9 +5,9 @@ import { env } from '../../config/env.js';
 
 export async function loginUser(email: string, passwordPlain: string) {
   const result = await query(
-    `SELECT id, email, password_hash, full_name, global_role, is_active
+    `SELECT id, username, email, password_hash, full_name, global_role, is_active
      FROM auth_core.users
-     WHERE LOWER(email) = LOWER($1)`,
+     WHERE LOWER(email) = LOWER($1) OR LOWER(username) = LOWER($1)`,
     [email]
   );
 
@@ -32,6 +32,7 @@ export async function loginUser(email: string, passwordPlain: string) {
 
   const payload = {
     id: user.id,
+    username: user.username || user.email,
     email: user.email,
     full_name: user.full_name,
     firstName,
