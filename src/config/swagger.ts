@@ -983,7 +983,40 @@ This centralized API integrates all capstone subsystems into a unified platform:
         parameters: [
           { name: 'employee_code', in: 'query', schema: { type: 'string' }, example: 'EMP-0001' }
         ],
-        responses: { 200: { description: 'Workforce records returned.' } }
+        responses: {
+          200: {
+            description: 'Workforce records returned.',
+            content: {
+              'application/json': {
+                example: {
+                  success: true,
+                  data: [
+                    {
+                      id: '7d1f2e3a-4b5c-6d7e-8f9a-0b1c2d3e4f5a',
+                      employee_code: 'EMP-0001',
+                      first_name: 'Gabriel',
+                      last_name: 'Dela Cruz',
+                      period_start: '2026-11-01',
+                      period_end: '2026-11-30',
+                      scheduled_days: 22,
+                      days_present: 21,
+                      days_absent: 1,
+                      late_count: 2,
+                      total_late_minutes: 35,
+                      overtime_hours: '4.50',
+                      leave_days: 1,
+                      unexcused_absences: 0,
+                      disciplinary_actions: 0,
+                      attendance_rate: '95.45',
+                      external_ref: 'HR2-2026-11-EMP-0001',
+                      source: 'hr2_api'
+                    }
+                  ]
+                }
+              }
+            }
+          }
+        }
       },
       post: {
         tags: ['PDMS'],
@@ -1020,12 +1053,38 @@ This centralized API integrates all capstone subsystems into a unified platform:
                     }
                   }
                 }
+              },
+              example: {
+                records: [
+                  {
+                    employee_code: 'EMP-0001',
+                    period_start: '2026-11-01',
+                    period_end: '2026-11-30',
+                    scheduled_days: 22,
+                    days_present: 21,
+                    days_absent: 1,
+                    late_count: 2,
+                    total_late_minutes: 35,
+                    overtime_hours: 4.5,
+                    leave_days: 1,
+                    unexcused_absences: 0,
+                    disciplinary_actions: 0,
+                    external_ref: 'HR2-2026-11-EMP-0001'
+                  }
+                ]
               }
             }
           }
         },
         responses: {
-          200: { description: 'Returns { accepted, rejected } batch summary.' },
+          200: {
+            description: 'Returns { accepted, rejected } batch summary.',
+            content: {
+              'application/json': {
+                example: { accepted: 1, rejected: [] }
+              }
+            }
+          },
           422: { description: 'records missing or exceeds 500 rows.' }
         }
       }
@@ -1046,11 +1105,21 @@ This centralized API integrates all capstone subsystems into a unified platform:
                   period_start: { type: 'string', format: 'date', example: '2026-11-01' },
                   period_end: { type: 'string', format: 'date', example: '2026-11-30' }
                 }
-              }
+              },
+              example: { period_start: '2026-11-01', period_end: '2026-11-30' }
             }
           }
         },
-        responses: { 200: { description: 'WFM metrics synced into PDMS.' } }
+        responses: {
+          200: {
+            description: 'WFM metrics synced into PDMS.',
+            content: {
+              'application/json': {
+                example: { success: true, accepted: 25, rejected: [] }
+              }
+            }
+          }
+        }
       }
     },
     '/pdms/dashboard': {
@@ -1058,7 +1127,35 @@ This centralized API integrates all capstone subsystems into a unified platform:
         tags: ['PDMS'],
         summary: 'Get PDMS dashboard counts and average performance health score',
         security: [{ BearerAuth: [] }],
-        responses: { 200: { description: 'Dashboard summary returned.' } }
+        responses: {
+          200: {
+            description: 'Dashboard summary returned.',
+            content: {
+              'application/json': {
+                example: {
+                  success: true,
+                  data: {
+                    counts: {
+                      employees: 25,
+                      active_goals: 12,
+                      reviews: 22,
+                      courses: 12,
+                      trainings: 13,
+                      recognitions: 26,
+                      vacant_positions: 2
+                    },
+                    performance_health: {
+                      average_score: 84.9,
+                      completed: 12,
+                      pending: 3,
+                      total: 22
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
       }
     },
     '/pdms/competencies': {
@@ -1066,13 +1163,70 @@ This centralized API integrates all capstone subsystems into a unified platform:
         tags: ['PDMS'],
         summary: 'List active competencies',
         security: [{ BearerAuth: [] }],
-        responses: { 200: { description: 'Competencies list.' } }
+        responses: {
+          200: {
+            description: 'Competencies list.',
+            content: {
+              'application/json': {
+                example: {
+                  success: true,
+                  data: [
+                    {
+                      id: '11111111-2222-3333-4444-555555555555',
+                      code: 'COMP-001',
+                      name: 'Chemical Quality Assurance',
+                      category: 'Technical',
+                      description: 'Ability to inspect raw materials and batch outputs against ISO standards.',
+                      is_active: true,
+                      created_at: '2026-11-25T12:00:00.000Z'
+                    }
+                  ]
+                }
+              }
+            }
+          }
+        }
       },
       post: {
         tags: ['PDMS'],
         summary: 'Create a competency',
         security: [{ BearerAuth: [] }],
-        responses: { 201: { description: 'Competency created.' } }
+        requestBody: {
+          required: true,
+          content: {
+            'application/json': {
+              schema: {
+                type: 'object',
+                required: ['name'],
+                properties: {
+                  code: { type: 'string', example: 'COMP-001' },
+                  name: { type: 'string', example: 'Chemical Quality Assurance' },
+                  category: { type: 'string', example: 'Technical' },
+                  description: { type: 'string', example: 'Ability to inspect raw materials and batch outputs.' }
+                }
+              }
+            }
+          }
+        },
+        responses: {
+          201: {
+            description: 'Competency created.',
+            content: {
+              'application/json': {
+                example: {
+                  success: true,
+                  data: {
+                    id: '11111111-2222-3333-4444-555555555555',
+                    code: 'COMP-001',
+                    name: 'Chemical Quality Assurance',
+                    category: 'Technical',
+                    is_active: true
+                  }
+                }
+              }
+            }
+          }
+        }
       }
     },
     '/pdms/goals': {
@@ -1080,13 +1234,77 @@ This centralized API integrates all capstone subsystems into a unified platform:
         tags: ['PDMS'],
         summary: 'List employee & organizational goals',
         security: [{ BearerAuth: [] }],
-        responses: { 200: { description: 'Goals list.' } }
+        responses: {
+          200: {
+            description: 'Goals list.',
+            content: {
+              'application/json': {
+                example: {
+                  success: true,
+                  data: [
+                    {
+                      id: '22222222-3333-4444-5555-666666666666',
+                      employee_id: 'fc84931c-ffd2-451f-a7d1-005f3dafe08b',
+                      employee_code: 'EMP-0001',
+                      first_name: 'Gabriel',
+                      last_name: 'Dela Cruz',
+                      title: 'Reduce Batch Defect Rate Below 1.5%',
+                      description: 'Implement automated lab sampling checks on every production shift.',
+                      progress: '75.00',
+                      weight: 75,
+                      status: 'In Progress',
+                      due_date: '2026-12-31'
+                    }
+                  ]
+                }
+              }
+            }
+          }
+        }
       },
       post: {
         tags: ['PDMS'],
         summary: 'Create a goal',
         security: [{ BearerAuth: [] }],
-        responses: { 201: { description: 'Goal created.' } }
+        requestBody: {
+          required: true,
+          content: {
+            'application/json': {
+              schema: {
+                type: 'object',
+                required: ['title'],
+                properties: {
+                  employee_id: { type: 'string', format: 'uuid', example: 'fc84931c-ffd2-451f-a7d1-005f3dafe08b' },
+                  title: { type: 'string', example: 'Reduce Batch Defect Rate Below 1.5%' },
+                  description: { type: 'string', example: 'Implement automated lab sampling checks.' },
+                  progress: { type: 'number', example: 25 },
+                  weight: { type: 'integer', example: 75 },
+                  status: { type: 'string', example: 'In Progress' },
+                  due_date: { type: 'string', format: 'date', example: '2026-12-31' }
+                }
+              }
+            }
+          }
+        },
+        responses: {
+          201: {
+            description: 'Goal created.',
+            content: {
+              'application/json': {
+                example: {
+                  success: true,
+                  data: {
+                    id: '22222222-3333-4444-5555-666666666666',
+                    title: 'Reduce Batch Defect Rate Below 1.5%',
+                    progress: '25.00',
+                    weight: 75,
+                    status: 'In Progress'
+                  }
+                }
+              }
+            }
+          }
+        }
       }
     },
     '/pdms/kpis': {
@@ -1094,13 +1312,73 @@ This centralized API integrates all capstone subsystems into a unified platform:
         tags: ['PDMS'],
         summary: 'List KPIs',
         security: [{ BearerAuth: [] }],
-        responses: { 200: { description: 'KPIs list.' } }
+        responses: {
+          200: {
+            description: 'KPIs list.',
+            content: {
+              'application/json': {
+                example: {
+                  success: true,
+                  data: [
+                    {
+                      id: '33333333-4444-5555-6666-777777777777',
+                      name: 'On-Time Delivery & Attendance Rate',
+                      source: 'goals.progress',
+                      unit: '%',
+                      target_value: '95.00',
+                      direction: 'higher',
+                      frequency: 'monthly',
+                      is_active: true
+                    }
+                  ]
+                }
+              }
+            }
+          }
+        }
       },
       post: {
         tags: ['PDMS'],
         summary: 'Create a KPI',
         security: [{ BearerAuth: [] }],
-        responses: { 201: { description: 'KPI created.' } }
+        requestBody: {
+          required: true,
+          content: {
+            'application/json': {
+              schema: {
+                type: 'object',
+                required: ['name'],
+                properties: {
+                  name: { type: 'string', example: 'On-Time Delivery & Attendance Rate' },
+                  source: { type: 'string', example: 'manual' },
+                  unit: { type: 'string', example: '%' },
+                  target_value: { type: 'number', example: 95 },
+                  direction: { type: 'string', enum: ['higher', 'lower'], example: 'higher' },
+                  frequency: { type: 'string', example: 'monthly' }
+                }
+              }
+            }
+          }
+        },
+        responses: {
+          201: {
+            description: 'KPI created.',
+            content: {
+              'application/json': {
+                example: {
+                  success: true,
+                  data: {
+                    id: '33333333-4444-5555-6666-777777777777',
+                    name: 'On-Time Delivery & Attendance Rate',
+                    unit: '%',
+                    target_value: '95.00',
+                    direction: 'higher'
+                  }
+                }
+              }
+            }
+          }
+        }
       }
     },
     '/pdms/performance-reviews': {
@@ -1108,13 +1386,72 @@ This centralized API integrates all capstone subsystems into a unified platform:
         tags: ['PDMS'],
         summary: 'List performance reviews',
         security: [{ BearerAuth: [] }],
-        responses: { 200: { description: 'Performance reviews list.' } }
+        responses: {
+          200: {
+            description: 'Performance reviews list.',
+            content: {
+              'application/json': {
+                example: {
+                  success: true,
+                  data: [
+                    {
+                      id: '44444444-5555-6666-7777-888888888888',
+                      employee_id: 'fc84931c-ffd2-451f-a7d1-005f3dafe08b',
+                      employee_code: 'EMP-0001',
+                      first_name: 'Gabriel',
+                      last_name: 'Dela Cruz',
+                      cycle_name: 'Q4 2026 Annual Review',
+                      score: '88.50',
+                      status: 'Completed',
+                      comments: 'Consistent quality assurance output and zero safety incidents.'
+                    }
+                  ]
+                }
+              }
+            }
+          }
+        }
       },
       post: {
         tags: ['PDMS'],
         summary: 'Create a performance review',
         security: [{ BearerAuth: [] }],
-        responses: { 201: { description: 'Performance review created.' } }
+        requestBody: {
+          required: true,
+          content: {
+            'application/json': {
+              schema: {
+                type: 'object',
+                required: ['cycle_name'],
+                properties: {
+                  employee_id: { type: 'string', format: 'uuid', example: 'fc84931c-ffd2-451f-a7d1-005f3dafe08b' },
+                  cycle_name: { type: 'string', example: 'Q4 2026 Annual Review' },
+                  score: { type: 'number', example: 88.5 },
+                  status: { type: 'string', example: 'Completed' },
+                  comments: { type: 'string', example: 'Consistent quality assurance output.' }
+                }
+              }
+            }
+          }
+        },
+        responses: {
+          201: {
+            description: 'Performance review created.',
+            content: {
+              'application/json': {
+                example: {
+                  success: true,
+                  data: {
+                    id: '44444444-5555-6666-7777-888888888888',
+                    cycle_name: 'Q4 2026 Annual Review',
+                    score: '88.50',
+                    status: 'Completed'
+                  }
+                }
+              }
+            }
+          }
+        }
       }
     },
     '/pdms/courses': {
@@ -1122,7 +1459,27 @@ This centralized API integrates all capstone subsystems into a unified platform:
         tags: ['PDMS'],
         summary: 'List learning courses',
         security: [{ BearerAuth: [] }],
-        responses: { 200: { description: 'Courses list.' } }
+        responses: {
+          200: {
+            description: 'Courses list.',
+            content: {
+              'application/json': {
+                example: {
+                  success: true,
+                  data: [
+                    {
+                      id: '55555555-6666-7777-8888-999999999999',
+                      title: 'ISO 9001 & Chemical Handling Safety',
+                      category: 'Compliance',
+                      duration_minutes: 120,
+                      is_published: true
+                    }
+                  ]
+                }
+              }
+            }
+          }
+        }
       }
     },
     '/pdms/trainings': {
@@ -1130,7 +1487,28 @@ This centralized API integrates all capstone subsystems into a unified platform:
         tags: ['PDMS'],
         summary: 'List training programs',
         security: [{ BearerAuth: [] }],
-        responses: { 200: { description: 'Trainings list.' } }
+        responses: {
+          200: {
+            description: 'Trainings list.',
+            content: {
+              'application/json': {
+                example: {
+                  success: true,
+                  data: [
+                    {
+                      id: '66666666-7777-8888-9999-aaaaaaaaaaaa',
+                      title: 'Batching Plant Operations Bootcamp',
+                      trainer_name: 'Engr. Marco Santos',
+                      start_date: '2026-12-01',
+                      end_date: '2026-12-03',
+                      status: 'Scheduled'
+                    }
+                  ]
+                }
+              }
+            }
+          }
+        }
       }
     },
     '/pdms/succession-positions': {
@@ -1138,7 +1516,27 @@ This centralized API integrates all capstone subsystems into a unified platform:
         tags: ['PDMS'],
         summary: 'List succession planning positions',
         security: [{ BearerAuth: [] }],
-        responses: { 200: { description: 'Succession positions list.' } }
+        responses: {
+          200: {
+            description: 'Succession positions list.',
+            content: {
+              'application/json': {
+                example: {
+                  success: true,
+                  data: [
+                    {
+                      id: '77777777-8888-9999-aaaa-bbbbbbbbbbbb',
+                      title: 'Senior Plant Operations Supervisor',
+                      urgency: 'High',
+                      readiness_target: 'Ready in 6 Months',
+                      vacant_since: '2026-10-15'
+                    }
+                  ]
+                }
+              }
+            }
+          }
+        }
       }
     },
     '/pdms/recognitions': {
@@ -1146,13 +1544,70 @@ This centralized API integrates all capstone subsystems into a unified platform:
         tags: ['PDMS'],
         summary: 'List social recognitions',
         security: [{ BearerAuth: [] }],
-        responses: { 200: { description: 'Recognitions list.' } }
+        responses: {
+          200: {
+            description: 'Recognitions list.',
+            content: {
+              'application/json': {
+                example: {
+                  success: true,
+                  data: [
+                    {
+                      id: '88888888-9999-aaaa-bbbb-cccccccccccc',
+                      recipient_first_name: 'Gabriel',
+                      recipient_last_name: 'Dela Cruz',
+                      sender_first_name: 'Vincent',
+                      sender_last_name: 'De Leon',
+                      category: 'Safety Excellence',
+                      message: 'Zero-defect batch testing across 30 consecutive shifts.',
+                      status: 'Approved'
+                    }
+                  ]
+                }
+              }
+            }
+          }
+        }
       },
       post: {
         tags: ['PDMS'],
         summary: 'Create a social recognition',
         security: [{ BearerAuth: [] }],
-        responses: { 201: { description: 'Recognition created.' } }
+        requestBody: {
+          required: true,
+          content: {
+            'application/json': {
+              schema: {
+                type: 'object',
+                required: ['message'],
+                properties: {
+                  recipient_employee_id: { type: 'string', format: 'uuid', example: 'fc84931c-ffd2-451f-a7d1-005f3dafe08b' },
+                  sender_employee_id: { type: 'string', format: 'uuid' },
+                  category: { type: 'string', example: 'Safety Excellence' },
+                  message: { type: 'string', example: 'Zero-defect batch testing across 30 consecutive shifts.' }
+                }
+              }
+            }
+          }
+        },
+        responses: {
+          201: {
+            description: 'Recognition created.',
+            content: {
+              'application/json': {
+                example: {
+                  success: true,
+                  data: {
+                    id: '88888888-9999-aaaa-bbbb-cccccccccccc',
+                    category: 'Safety Excellence',
+                    message: 'Zero-defect batch testing across 30 consecutive shifts.',
+                    status: 'Approved'
+                  }
+                }
+              }
+            }
+          }
+        }
       }
     },
 
