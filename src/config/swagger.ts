@@ -14,6 +14,7 @@ This centralized API integrates all capstone subsystems into a unified platform:
 - **Shop**: E-Commerce Storefront, Products, Vouchers, Cart Checkout, Cancellation & Return Requests, and Tracking
 - **Fleet**: Logistics Fleet Management, Vehicles, Drivers, Dispatches, and GPS Tracking
 - **SmartChain**: External Supply Chain Integration (Logistics Callbacks, Delivery Requests, Financial Events, Purchase Orders & Disbursements)
+- **PDMS**: Performance & Development Management System (Competencies, Goals, KPIs, Reviews, Learning, Succession, Recognition & HR2/WFM Workforce Sync)
 - **Stubs**: Finance Ledger and Supply Chain Warehousing integration endpoints
     `,
     contact: {
@@ -49,6 +50,7 @@ This centralized API integrates all capstone subsystems into a unified platform:
     { name: 'Shop', description: 'E-Commerce Catalog, Vouchers, Checkout, Order Tracking, Cancellations, Returns & Reviews' },
     { name: 'Fleet', description: 'Vehicles, Drivers, Delivery Dispatches, Fuel Logs & GPS Tracking' },
     { name: 'SmartChain', description: 'SmartChain External Integration (Logistics Status Events, Delivery Requests, Finance Events, POs & Disbursements)' },
+    { name: 'PDMS', description: 'Performance & Development Management System (Competencies, Goals, KPIs, Reviews, Learning, Succession, Recognition & HR2 Workforce Records)' },
     { name: 'Stubs', description: 'Mock Endpoints for External Capstone Subsystems (Finance & SCM)' }
   ],
   paths: {
@@ -969,6 +971,188 @@ This centralized API integrates all capstone subsystems into a unified platform:
         tags: ['SmartChain'],
         summary: 'List recorded SmartChain financial events, purchase orders, and disbursements',
         responses: { 200: { description: 'Finance records returned.' } }
+      }
+    },
+
+    // PDMS INTEGRATION
+    '/pdms/workforce-records': {
+      get: {
+        tags: ['PDMS'],
+        summary: 'List HR2/WFM workforce records synced to PDMS',
+        security: [{ BearerAuth: [] }],
+        parameters: [
+          { name: 'employee_code', in: 'query', schema: { type: 'string' }, example: 'EMP-0001' }
+        ],
+        responses: { 200: { description: 'Workforce records returned.' } }
+      },
+      post: {
+        tags: ['PDMS'],
+        summary: 'Ingest HR2/WFM workforce records batch (up to 500 rows)',
+        description: 'Accepts attendance, lateness, leave, and overtime figures per employee period, computes attendance_rate, and upserts idempotently.',
+        requestBody: {
+          required: true,
+          content: {
+            'application/json': {
+              schema: {
+                type: 'object',
+                required: ['records'],
+                properties: {
+                  records: {
+                    type: 'array',
+                    items: {
+                      type: 'object',
+                      required: ['employee_code', 'period_start', 'period_end', 'scheduled_days'],
+                      properties: {
+                        employee_code: { type: 'string', example: 'EMP-0001' },
+                        period_start: { type: 'string', format: 'date', example: '2026-11-01' },
+                        period_end: { type: 'string', format: 'date', example: '2026-11-30' },
+                        scheduled_days: { type: 'integer', example: 22 },
+                        days_present: { type: 'integer', example: 21 },
+                        days_absent: { type: 'integer', example: 1 },
+                        late_count: { type: 'integer', example: 2 },
+                        total_late_minutes: { type: 'integer', example: 35 },
+                        overtime_hours: { type: 'number', example: 4.5 },
+                        leave_days: { type: 'integer', example: 1 },
+                        unexcused_absences: { type: 'integer', example: 0 },
+                        disciplinary_actions: { type: 'integer', example: 0 },
+                        external_ref: { type: 'string', example: 'HR2-2026-11-EMP-0001' }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        responses: {
+          200: { description: 'Returns { accepted, rejected } batch summary.' },
+          422: { description: 'records missing or exceeds 500 rows.' }
+        }
+      }
+    },
+    '/pdms/workforce-records/sync-from-wfm': {
+      post: {
+        tags: ['PDMS'],
+        summary: 'Aggregate live WFM attendance, schedules, leaves & overtime into PDMS workforce records',
+        security: [{ BearerAuth: [] }],
+        requestBody: {
+          required: true,
+          content: {
+            'application/json': {
+              schema: {
+                type: 'object',
+                required: ['period_start', 'period_end'],
+                properties: {
+                  period_start: { type: 'string', format: 'date', example: '2026-11-01' },
+                  period_end: { type: 'string', format: 'date', example: '2026-11-30' }
+                }
+              }
+            }
+          }
+        },
+        responses: { 200: { description: 'WFM metrics synced into PDMS.' } }
+      }
+    },
+    '/pdms/dashboard': {
+      get: {
+        tags: ['PDMS'],
+        summary: 'Get PDMS dashboard counts and average performance health score',
+        security: [{ BearerAuth: [] }],
+        responses: { 200: { description: 'Dashboard summary returned.' } }
+      }
+    },
+    '/pdms/competencies': {
+      get: {
+        tags: ['PDMS'],
+        summary: 'List active competencies',
+        security: [{ BearerAuth: [] }],
+        responses: { 200: { description: 'Competencies list.' } }
+      },
+      post: {
+        tags: ['PDMS'],
+        summary: 'Create a competency',
+        security: [{ BearerAuth: [] }],
+        responses: { 201: { description: 'Competency created.' } }
+      }
+    },
+    '/pdms/goals': {
+      get: {
+        tags: ['PDMS'],
+        summary: 'List employee & organizational goals',
+        security: [{ BearerAuth: [] }],
+        responses: { 200: { description: 'Goals list.' } }
+      },
+      post: {
+        tags: ['PDMS'],
+        summary: 'Create a goal',
+        security: [{ BearerAuth: [] }],
+        responses: { 201: { description: 'Goal created.' } }
+      }
+    },
+    '/pdms/kpis': {
+      get: {
+        tags: ['PDMS'],
+        summary: 'List KPIs',
+        security: [{ BearerAuth: [] }],
+        responses: { 200: { description: 'KPIs list.' } }
+      },
+      post: {
+        tags: ['PDMS'],
+        summary: 'Create a KPI',
+        security: [{ BearerAuth: [] }],
+        responses: { 201: { description: 'KPI created.' } }
+      }
+    },
+    '/pdms/performance-reviews': {
+      get: {
+        tags: ['PDMS'],
+        summary: 'List performance reviews',
+        security: [{ BearerAuth: [] }],
+        responses: { 200: { description: 'Performance reviews list.' } }
+      },
+      post: {
+        tags: ['PDMS'],
+        summary: 'Create a performance review',
+        security: [{ BearerAuth: [] }],
+        responses: { 201: { description: 'Performance review created.' } }
+      }
+    },
+    '/pdms/courses': {
+      get: {
+        tags: ['PDMS'],
+        summary: 'List learning courses',
+        security: [{ BearerAuth: [] }],
+        responses: { 200: { description: 'Courses list.' } }
+      }
+    },
+    '/pdms/trainings': {
+      get: {
+        tags: ['PDMS'],
+        summary: 'List training programs',
+        security: [{ BearerAuth: [] }],
+        responses: { 200: { description: 'Trainings list.' } }
+      }
+    },
+    '/pdms/succession-positions': {
+      get: {
+        tags: ['PDMS'],
+        summary: 'List succession planning positions',
+        security: [{ BearerAuth: [] }],
+        responses: { 200: { description: 'Succession positions list.' } }
+      }
+    },
+    '/pdms/recognitions': {
+      get: {
+        tags: ['PDMS'],
+        summary: 'List social recognitions',
+        security: [{ BearerAuth: [] }],
+        responses: { 200: { description: 'Recognitions list.' } }
+      },
+      post: {
+        tags: ['PDMS'],
+        summary: 'Create a social recognition',
+        security: [{ BearerAuth: [] }],
+        responses: { 201: { description: 'Recognition created.' } }
       }
     },
 
