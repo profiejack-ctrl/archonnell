@@ -11,6 +11,8 @@ router.get('/products', shopController.getProducts);
 router.get('/products/:id', shopController.getProduct);
 router.post('/vouchers/validate', shopController.validateVoucher);
 router.post('/orders', shopController.checkout);
+router.post('/orders/:identifier/cancellation-requests', shopController.requestCancellation);
+router.post('/return-requests', shopController.submitReturnRequest);
 router.get('/orders/track/:identifier', shopController.getOrder);
 router.get('/reviews/:productId', shopController.getReviews);
 

@@ -20,7 +20,10 @@ const envSchema = z.object({
     SMTP_PASS: z.string().optional().default(''),
     SMTP_FROM_EMAIL: z.string().optional().default('no-reply@archonnell.com'),
     SMTP_FROM_NAME: z.string().optional().default('Archon Nell Incorporated'),
-    OTP_EXPIRATION_MINUTES: z.union([z.string(), z.number()]).optional().default(5).transform((val) => typeof val === 'number' ? val : parseInt(val || '5', 10))
+    OTP_EXPIRATION_MINUTES: z.union([z.string(), z.number()]).optional().default(5).transform((val) => typeof val === 'number' ? val : parseInt(val || '5', 10)),
+    // SmartChain Integration
+    SMARTCHAIN_WEBHOOK_SECRET: z.string().optional().default(''),
+    SMARTCHAIN_PARTNER_TOKEN: z.string().optional().default('')
 });
 const parsedEnv = envSchema.safeParse(process.env);
 if (!parsedEnv.success) {
@@ -44,7 +47,9 @@ export const env = parsedEnv.success ? parsedEnv.data : {
     SMTP_PASS: process.env.SMTP_PASS || '',
     SMTP_FROM_EMAIL: process.env.SMTP_FROM_EMAIL || 'no-reply@archonnell.com',
     SMTP_FROM_NAME: process.env.SMTP_FROM_NAME || 'Archon Nell Incorporated',
-    OTP_EXPIRATION_MINUTES: 5
+    OTP_EXPIRATION_MINUTES: 5,
+    SMARTCHAIN_WEBHOOK_SECRET: process.env.SMARTCHAIN_WEBHOOK_SECRET || '',
+    SMARTCHAIN_PARTNER_TOKEN: process.env.SMARTCHAIN_PARTNER_TOKEN || ''
 };
 if (process.env.VERCEL) {
     const dbUrl = env.DATABASE_URL || '';

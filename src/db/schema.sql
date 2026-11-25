@@ -478,15 +478,24 @@ CREATE TABLE IF NOT EXISTS shop.products (
     custom_id VARCHAR(50) UNIQUE, -- e.g. 'prod-1'
     title VARCHAR(255) NOT NULL,
     description TEXT,
+    brand VARCHAR(150),
+    unit VARCHAR(20) DEFAULT 'PCS', -- 'PCS', 'SACK', 'DRUM'
+    currency VARCHAR(10) DEFAULT 'PHP',
     price NUMERIC(12, 2) NOT NULL DEFAULT 0.00,
     stock INT NOT NULL DEFAULT 0,
     sku VARCHAR(100),
     images JSONB DEFAULT '[]',
     specs JSONB DEFAULT '{}',
+    publishable BOOLEAN DEFAULT TRUE,
     is_active BOOLEAN DEFAULT TRUE,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
+
+ALTER TABLE shop.products ADD COLUMN IF NOT EXISTS brand VARCHAR(150);
+ALTER TABLE shop.products ADD COLUMN IF NOT EXISTS unit VARCHAR(20) DEFAULT 'PCS';
+ALTER TABLE shop.products ADD COLUMN IF NOT EXISTS currency VARCHAR(10) DEFAULT 'PHP';
+ALTER TABLE shop.products ADD COLUMN IF NOT EXISTS publishable BOOLEAN DEFAULT TRUE;
 
 CREATE TABLE IF NOT EXISTS shop.vouchers (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -505,12 +514,16 @@ CREATE TABLE IF NOT EXISTS shop.vouchers (
 CREATE TABLE IF NOT EXISTS shop.orders (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     order_number VARCHAR(100) UNIQUE NOT NULL,
+    external_order_id VARCHAR(100) UNIQUE,
     user_id UUID REFERENCES auth_core.users(id) ON DELETE SET NULL,
     customer_name VARCHAR(255) NOT NULL,
     customer_email VARCHAR(255) NOT NULL,
     customer_phone VARCHAR(50) NOT NULL,
     delivery_address TEXT NOT NULL,
     delivery_notes TEXT,
+    order_date DATE DEFAULT CURRENT_DATE,
+    required_delivery_date DATE,
+    currency VARCHAR(10) DEFAULT 'PHP',
     payment_method VARCHAR(50) NOT NULL, -- 'GCash', 'Maya', 'Bank', 'COD'
     payment_status VARCHAR(50) DEFAULT 'Pending', -- 'Pending', 'Paid', 'Failed', 'Refunded'
     gcash_ref_number VARCHAR(100),
@@ -521,18 +534,129 @@ CREATE TABLE IF NOT EXISTS shop.orders (
     delivery_status VARCHAR(50) DEFAULT 'Pending', -- 'Pending', 'Processing', 'Dispatched', 'Delivered', 'Cancelled'
     current_tracking_step VARCHAR(100) DEFAULT 'Order Placed',
     tracking_steps JSONB DEFAULT '[]',
+    cancellation_reason TEXT,
+    cancelled_at TIMESTAMP WITH TIME ZONE,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
+
+ALTER TABLE shop.orders ADD COLUMN IF NOT EXISTS external_order_id VARCHAR(100) UNIQUE;
+ALTER TABLE shop.orders ADD COLUMN IF NOT EXISTS order_date DATE DEFAULT CURRENT_DATE;
+ALTER TABLE shop.orders ADD COLUMN IF NOT EXISTS required_delivery_date DATE;
+ALTER TABLE shop.orders ADD COLUMN IF NOT EXISTS currency VARCHAR(10) DEFAULT 'PHP';
+ALTER TABLE shop.orders ADD COLUMN IF NOT EXISTS cancellation_reason TEXT;
+ALTER TABLE shop.orders ADD COLUMN IF NOT EXISTS cancelled_at TIMESTAMP WITH TIME ZONE;
 
 CREATE TABLE IF NOT EXISTS shop.order_items (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     order_id UUID NOT NULL REFERENCES shop.orders(id) ON DELETE CASCADE,
     product_id UUID REFERENCES shop.products(id) ON DELETE SET NULL,
+    external_line_id VARCHAR(100),
     title VARCHAR(255) NOT NULL,
     price NUMERIC(12, 2) NOT NULL,
     quantity INT NOT NULL DEFAULT 1,
     total NUMERIC(12, 2) NOT NULL
+);
+
+ALTER TABLE shop.order_items ADD COLUMN IF NOT EXISTS external_line_id VARCHAR(100);
+
+CREATE TABLE IF NOT EXISTS shop.return_requests (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    return_reference VARCHAR(100) UNIQUE NOT NULL,
+    external_request_id VARCHAR(100) UNIQUE NOT NULL,
+    order_id UUID REFERENCES shop.orders(id) ON DELETE SET NULL,
+    external_order_id VARCHAR(100) NOT NULL,
+    external_line_id VARCHAR(100) NOT NULL,
+    quantity INT NOT NULL CHECK (quantity > 0),
+    reason TEXT NOT NULL,
+    status VARCHAR(50) DEFAULT 'REQUESTED',
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+-- ------------------------------------------------------------------------------
+-- 7B. SMARTCHAIN INTEGRATION SCHEMA (Logistics Callbacks, POs, Finance Events)
+-- ------------------------------------------------------------------------------
+CREATE SCHEMA IF NOT EXISTS smartchain;
+
+CREATE TABLE IF NOT EXISTS smartchain.delivery_requests (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    delivery_request_id UUID UNIQUE NOT NULL,
+    order_reference VARCHAR(100) NOT NULL,
+    shipment_reference VARCHAR(100) NOT NULL,
+    partner_code VARCHAR(50) NOT NULL,
+    partner_delivery_request_id VARCHAR(100),
+    pickup JSONB DEFAULT '{}',
+    recipient JSONB DEFAULT '{}',
+    required_delivery_at TIMESTAMP WITH TIME ZONE,
+    items JSONB DEFAULT '[]',
+    callback_url TEXT,
+    status VARCHAR(50) DEFAULT 'SCHEDULED', -- 'SCHEDULED', 'IN_TRANSIT', 'DELIVERED', 'CANCELLED'
+    idempotency_key VARCHAR(100),
+    correlation_id VARCHAR(100),
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS smartchain.logistics_status_events (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    schema_version VARCHAR(20) NOT NULL DEFAULT '1.0',
+    event_id VARCHAR(100) NOT NULL,
+    partner_code VARCHAR(50) NOT NULL,
+    delivery_request_id UUID NOT NULL,
+    partner_delivery_request_id VARCHAR(100) NOT NULL,
+    status VARCHAR(30) NOT NULL, -- 'IN_TRANSIT', 'DELIVERED'
+    occurred_at TIMESTAMP WITH TIME ZONE NOT NULL,
+    note TEXT,
+    proof_reference VARCHAR(255),
+    payload_hash VARCHAR(64) NOT NULL,
+    result VARCHAR(30) NOT NULL DEFAULT 'APPLIED', -- 'APPLIED', 'DUPLICATE', 'IGNORED_OUT_OF_ORDER'
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    UNIQUE (partner_code, event_id)
+);
+
+CREATE TABLE IF NOT EXISTS smartchain.financial_events (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    schema_version VARCHAR(20) NOT NULL DEFAULT '1.0',
+    event_id VARCHAR(100) UNIQUE NOT NULL,
+    event_type VARCHAR(100) NOT NULL,
+    occurred_at TIMESTAMP WITH TIME ZONE NOT NULL,
+    reference VARCHAR(100) NOT NULL,
+    status VARCHAR(50) NOT NULL,
+    amount NUMERIC(14, 2),
+    currency VARCHAR(10) DEFAULT 'PHP',
+    outcome VARCHAR(50) DEFAULT 'PENDING_REVIEW',
+    payload_hash VARCHAR(64) NOT NULL,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS smartchain.purchase_orders (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    message_id UUID UNIQUE NOT NULL,
+    external_reference_id VARCHAR(100) UNIQUE NOT NULL,
+    source_system VARCHAR(50) DEFAULT 'SMARTCHAIN',
+    category_type VARCHAR(100) NOT NULL,
+    currency VARCHAR(10) DEFAULT 'PHP',
+    total_amount NUMERIC(14, 2) NOT NULL,
+    supplier JSONB DEFAULT '{}',
+    items JSONB DEFAULT '[]',
+    idempotency_key VARCHAR(100),
+    correlation_id VARCHAR(100),
+    status VARCHAR(50) DEFAULT 'RECEIVED',
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS smartchain.disbursement_requests (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    external_module VARCHAR(100) NOT NULL,
+    external_reference_id VARCHAR(100) UNIQUE NOT NULL,
+    category_type VARCHAR(100) NOT NULL,
+    amount NUMERIC(14, 2) NOT NULL,
+    payee_info JSONB DEFAULT '{}',
+    description TEXT,
+    bill_number VARCHAR(100) UNIQUE NOT NULL,
+    transaction_code VARCHAR(100) UNIQUE NOT NULL,
+    status VARCHAR(50) DEFAULT 'UNPAID',
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
 
 CREATE TABLE IF NOT EXISTS shop.reviews (

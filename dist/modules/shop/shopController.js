@@ -57,6 +57,10 @@ export async function createProduct(req, res, next) {
             customId: z.string().optional(),
             title: z.string().min(2),
             description: z.string().optional(),
+            brand: z.string().optional(),
+            unit: z.enum(['PCS', 'SACK', 'DRUM']).optional(),
+            currency: z.string().optional(),
+            publishable: z.boolean().optional(),
             price: z.number().positive(),
             stock: z.number().int().nonnegative().optional(),
             sku: z.string().optional(),
@@ -99,6 +103,13 @@ export async function validateVoucher(req, res, next) {
 export async function checkout(req, res, next) {
     try {
         const schema = z.object({
+            externalOrderId: z.string().optional(),
+            external_order_id: z.string().optional(),
+            orderDate: z.string().optional(),
+            order_date: z.string().optional(),
+            requiredDeliveryDate: z.string().optional(),
+            required_delivery_date: z.string().optional(),
+            currency: z.string().optional(),
             customerName: z.string().min(2),
             customerEmail: z.string().email(),
             customerPhone: z.string().min(7),
@@ -113,6 +124,8 @@ export async function checkout(req, res, next) {
             voucherCode: z.string().optional(),
             items: z.array(z.object({
                 productId: z.string().uuid().optional(),
+                externalLineId: z.string().optional(),
+                external_line_id: z.string().optional(),
                 title: z.string().min(1),
                 price: z.number().positive(),
                 quantity: z.number().int().positive(),
@@ -123,9 +136,16 @@ export async function checkout(req, res, next) {
         const userId = req.user?.id;
         const data = await shopService.createOrder({
             ...parsed,
+            externalOrderId: parsed.externalOrderId || parsed.external_order_id,
+            orderDate: parsed.orderDate || parsed.order_date,
+            requiredDeliveryDate: parsed.requiredDeliveryDate || parsed.required_delivery_date,
+            items: parsed.items.map((item) => ({
+                ...item,
+                externalLineId: item.externalLineId || item.external_line_id
+            })),
             userId
         });
-        res.status(201).json({
+        res.status(data.replayed ? 200 : 201).json({
             success: true,
             message: 'Order placed successfully and logistics dispatch scheduled.',
             data
@@ -200,6 +220,47 @@ export async function addReview(req, res, next) {
             userId
         });
         res.status(201).json({ success: true, message: 'Review submitted.', data });
+    }
+    catch (err) {
+        next(err);
+    }
+}
+// SmartChain-compatible Early Cancellation & Return Requests
+export async function requestCancellation(req, res, next) {
+    try {
+        const schema = z.object({
+            external_request_id: z.string().min(1),
+            reason: z.string().min(1)
+        });
+        const parsed = schema.parse(req.body);
+        const data = await shopService.requestOrderCancellation(req.params.identifier, parsed);
+        res.status(data.replayed ? 200 : 201).json({
+            success: true,
+            order_no: data.order_no,
+            external_order_id: data.external_order_id,
+            status: data.status
+        });
+    }
+    catch (err) {
+        next(err);
+    }
+}
+export async function submitReturnRequest(req, res, next) {
+    try {
+        const schema = z.object({
+            external_request_id: z.string().min(1),
+            external_order_id: z.string().min(1),
+            external_line_id: z.string().min(1),
+            quantity: z.number().int().positive(),
+            reason: z.string().min(1)
+        });
+        const parsed = schema.parse(req.body);
+        const data = await shopService.createReturnRequest(parsed);
+        res.status(data.replayed ? 200 : 201).json({
+            success: true,
+            return_reference: data.return_reference,
+            status: data.status
+        });
     }
     catch (err) {
         next(err);

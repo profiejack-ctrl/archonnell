@@ -16,6 +16,23 @@ export async function createCategory(name, slug, description) {
      RETURNING *`, [name, slug.toLowerCase(), description || null]);
     return result.rows[0];
 }
+function enrichProductForSmartChain(row) {
+    if (!row)
+        return row;
+    const images = Array.isArray(row.images) ? row.images : [];
+    return {
+        ...row,
+        name: row.title,
+        category: row.category_name || null,
+        brand: row.brand || null,
+        unit: row.unit || 'PCS',
+        image_url: images[0] || null,
+        selling_price: row.price !== null && row.price !== undefined ? Number(row.price).toFixed(2) : null,
+        currency: row.currency || 'PHP',
+        available_stock: row.stock ?? 0,
+        publishable: row.publishable !== undefined ? Boolean(row.publishable) : Boolean(row.is_active),
+    };
+}
 export async function getAllProducts(options = {}) {
     let sql = `
     SELECT p.*, c.name AS category_name, c.slug AS category_slug,
@@ -44,7 +61,7 @@ export async function getAllProducts(options = {}) {
     }
     sql += ` GROUP BY p.id, c.name, c.slug ORDER BY p.created_at DESC`;
     const result = await query(sql, params);
-    return result.rows;
+    return result.rows.map(enrichProductForSmartChain);
 }
 export async function getProductById(id) {
     const result = await query(`SELECT p.*, c.name AS category_name, c.slug AS category_slug,
@@ -58,24 +75,28 @@ export async function getProductById(id) {
     if (result.rows.length === 0) {
         throw { statusCode: 404, code: 'PRODUCT_NOT_FOUND', message: 'Product not found.' };
     }
-    return result.rows[0];
+    return enrichProductForSmartChain(result.rows[0]);
 }
 export async function createProduct(data) {
     const result = await query(`INSERT INTO shop.products (
-       category_id, custom_id, title, description, price, stock, sku, images, specs
-     ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+       category_id, custom_id, title, description, brand, unit, currency, publishable, price, stock, sku, images, specs
+     ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
      RETURNING *`, [
         data.categoryId || null,
         data.customId || `prod-${Date.now().toString().slice(-5)}`,
         data.title,
         data.description || null,
+        data.brand || null,
+        data.unit || 'PCS',
+        data.currency || 'PHP',
+        data.publishable !== undefined ? data.publishable : true,
         data.price,
         data.stock || 0,
         data.sku || null,
         JSON.stringify(data.images || []),
         JSON.stringify(data.specs || {})
     ]);
-    return result.rows[0];
+    return enrichProductForSmartChain(result.rows[0]);
 }
 export async function updateProduct(id, data) {
     const fields = [];
@@ -84,6 +105,10 @@ export async function updateProduct(id, data) {
         categoryId: 'category_id',
         title: 'title',
         description: 'description',
+        brand: 'brand',
+        unit: 'unit',
+        currency: 'currency',
+        publishable: 'publishable',
         price: 'price',
         stock: 'stock',
         sku: 'sku',
@@ -152,6 +177,16 @@ export async function validateVoucher(code, subtotal) {
 // ORDERS & CHECKOUT (WITH AUTO-DISPATCH CREATION)
 // ------------------------------------------------------------------------------
 export async function createOrder(data) {
+    // Idempotent replay if externalOrderId already exists
+    if (data.externalOrderId) {
+        const existing = await query(`SELECT * FROM shop.orders WHERE external_order_id = $1`, [data.externalOrderId]);
+        if (existing.rows.length > 0) {
+            return {
+                ...existing.rows[0],
+                replayed: true
+            };
+        }
+    }
     const orderNumber = `ORD-${Date.now().toString().slice(-6)}-${Math.floor(100 + Math.random() * 900)}`;
     const defaultTrackingSteps = [
         { step: 'Order Placed', time: new Date().toISOString(), done: true },
@@ -162,19 +197,24 @@ export async function createOrder(data) {
     ];
     // 1. Insert Order
     const orderRes = await query(`INSERT INTO shop.orders (
-       order_number, user_id, customer_name, customer_email, customer_phone,
-       delivery_address, delivery_notes, payment_method, payment_status,
+       order_number, external_order_id, user_id, customer_name, customer_email, customer_phone,
+       delivery_address, delivery_notes, order_date, required_delivery_date, currency,
+       payment_method, payment_status,
        gcash_ref_number, proof_image, subtotal, discount, total,
        delivery_status, current_tracking_step, tracking_steps
-     ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, 'Pending', 'Order Placed', $15)
+     ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, COALESCE($9::date, CURRENT_DATE), $10::date, $11, $12, $13, $14, $15, $16, $17, $18, 'Pending', 'Order Placed', $19)
      RETURNING *`, [
         orderNumber,
+        data.externalOrderId || null,
         data.userId || null,
         data.customerName,
         data.customerEmail,
         data.customerPhone,
         data.deliveryAddress,
         data.deliveryNotes || '',
+        data.orderDate || null,
+        data.requiredDeliveryDate || null,
+        data.currency || 'PHP',
         data.paymentMethod,
         data.paymentMethod === 'COD' ? 'Pending' : data.gcashRefNumber ? 'Paid' : 'Pending',
         data.gcashRefNumber || null,
@@ -187,8 +227,8 @@ export async function createOrder(data) {
     const order = orderRes.rows[0];
     // 2. Insert Order Items & decrement product stock
     for (const item of data.items) {
-        await query(`INSERT INTO shop.order_items (order_id, product_id, title, price, quantity, total)
-       VALUES ($1, $2, $3, $4, $5, $6)`, [order.id, item.productId || null, item.title, item.price, item.quantity, item.total]);
+        await query(`INSERT INTO shop.order_items (order_id, product_id, external_line_id, title, price, quantity, total)
+       VALUES ($1, $2, $3, $4, $5, $6, $7)`, [order.id, item.productId || null, item.externalLineId || null, item.title, item.price, item.quantity, item.total]);
         if (item.productId) {
             await query(`UPDATE shop.products SET stock = GREATEST(0, stock - $1) WHERE id = $2`, [item.quantity, item.productId]);
         }
@@ -300,4 +340,77 @@ export async function createProductReview(data) {
         data.aiSentiment || 'POSITIVE'
     ]);
     return result.rows[0];
+}
+// ------------------------------------------------------------------------------
+// SMARTCHAIN CANCELLATION & RETURN REQUESTS
+// ------------------------------------------------------------------------------
+export async function requestOrderCancellation(identifier, data) {
+    const orderRes = await query(`SELECT * FROM shop.orders
+     WHERE id::text = $1 OR order_number = $1 OR external_order_id = $1
+     LIMIT 1`, [identifier]);
+    if (orderRes.rows.length === 0) {
+        throw { statusCode: 404, code: 'ORDER_NOT_FOUND', message: 'Order not found.' };
+    }
+    const order = orderRes.rows[0];
+    if (order.delivery_status === 'Cancelled') {
+        return {
+            replayed: true,
+            order_no: order.order_number,
+            external_order_id: order.external_order_id || identifier,
+            external_request_id: data.external_request_id,
+            status: 'CANCELLED'
+        };
+    }
+    if (['Dispatched', 'Delivered'].includes(order.delivery_status)) {
+        throw {
+            statusCode: 422,
+            code: 'CANCELLATION_NOT_ALLOWED',
+            message: `Order in status '${order.delivery_status}' can no longer be cancelled at early stage.`
+        };
+    }
+    await query(`UPDATE shop.orders
+     SET delivery_status = 'Cancelled',
+         cancellation_reason = $1,
+         cancelled_at = NOW(),
+         updated_at = NOW()
+     WHERE id = $2`, [data.reason, order.id]);
+    return {
+        replayed: false,
+        order_no: order.order_number,
+        external_order_id: order.external_order_id || identifier,
+        external_request_id: data.external_request_id,
+        status: 'CANCELLED'
+    };
+}
+export async function createReturnRequest(data) {
+    const existing = await query(`SELECT * FROM shop.return_requests WHERE external_request_id = $1`, [data.external_request_id]);
+    if (existing.rows.length > 0) {
+        const r = existing.rows[0];
+        return {
+            replayed: true,
+            return_reference: r.return_reference,
+            status: r.status
+        };
+    }
+    const orderRes = await query(`SELECT id FROM shop.orders WHERE external_order_id = $1 OR order_number = $1 OR id::text = $1 LIMIT 1`, [data.external_order_id]);
+    const orderId = orderRes.rows[0]?.id || null;
+    const returnReference = `CR-${Date.now().toString().slice(-6)}-${Math.floor(100 + Math.random() * 900)}`;
+    const result = await query(`INSERT INTO shop.return_requests (
+       return_reference, external_request_id, order_id, external_order_id, external_line_id, quantity, reason, status
+     ) VALUES ($1, $2, $3, $4, $5, $6, $7, 'REQUESTED')
+     RETURNING *`, [
+        returnReference,
+        data.external_request_id,
+        orderId,
+        data.external_order_id,
+        data.external_line_id,
+        data.quantity,
+        data.reason
+    ]);
+    return {
+        replayed: false,
+        return_reference: result.rows[0].return_reference,
+        status: result.rows[0].status,
+        data: result.rows[0]
+    };
 }

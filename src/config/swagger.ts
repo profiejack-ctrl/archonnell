@@ -11,8 +11,9 @@ This centralized API integrates all capstone subsystems into a unified platform:
 - **HRMS**: Core Human Capital, Employee Records, Job Postings, and Applicant Hiring
 - **WFM**: Workforce Scheduling, Kiosk Clock-in/out, Attendance, and Cutoff Timesheets
 - **Payroll**: Automated Calculation Engine, Payslips, Claims, and HMO Benefits
-- **Shop**: E-Commerce Storefront, Products, Vouchers, Cart Checkout, and Tracking
+- **Shop**: E-Commerce Storefront, Products, Vouchers, Cart Checkout, Cancellation & Return Requests, and Tracking
 - **Fleet**: Logistics Fleet Management, Vehicles, Drivers, Dispatches, and GPS Tracking
+- **SmartChain**: External Supply Chain Integration (Logistics Callbacks, Delivery Requests, Financial Events, Purchase Orders & Disbursements)
 - **Stubs**: Finance Ledger and Supply Chain Warehousing integration endpoints
     `,
     contact: {
@@ -45,8 +46,9 @@ This centralized API integrates all capstone subsystems into a unified platform:
     { name: 'HRMS', description: 'Core Human Capital, Departments, Positions, Employees, Jobs & Applicants' },
     { name: 'WFM', description: 'Workforce Shifts, Schedules, Kiosk Attendance, Timesheets & Leaves' },
     { name: 'Payroll', description: 'Payroll Runs, Automatic Calculation Engine, Payslips & HMO' },
-    { name: 'Shop', description: 'E-Commerce Catalog, Vouchers, Checkout, Order Tracking & Reviews' },
+    { name: 'Shop', description: 'E-Commerce Catalog, Vouchers, Checkout, Order Tracking, Cancellations, Returns & Reviews' },
     { name: 'Fleet', description: 'Vehicles, Drivers, Delivery Dispatches, Fuel Logs & GPS Tracking' },
+    { name: 'SmartChain', description: 'SmartChain External Integration (Logistics Status Events, Delivery Requests, Finance Events, POs & Disbursements)' },
     { name: 'Stubs', description: 'Mock Endpoints for External Capstone Subsystems (Finance & SCM)' }
   ],
   paths: {
@@ -718,6 +720,255 @@ This centralized API integrates all capstone subsystems into a unified platform:
           }
         },
         responses: { 201: { description: 'GPS location breadcrumb saved.' } }
+      }
+    },
+
+    // SHOP (SmartChain-compatible extensions)
+    '/shop/orders/{identifier}/cancellation-requests': {
+      post: {
+        tags: ['Shop'],
+        summary: 'Request early order cancellation (SmartChain-compatible)',
+        parameters: [
+          { name: 'identifier', in: 'path', required: true, schema: { type: 'string' }, description: 'Order UUID, order_number, or external_order_id' }
+        ],
+        requestBody: {
+          required: true,
+          content: {
+            'application/json': {
+              schema: {
+                type: 'object',
+                required: ['external_request_id', 'reason'],
+                properties: {
+                  external_request_id: { type: 'string', example: 'CANCEL-DEMO' },
+                  reason: { type: 'string', example: 'Customer requested early cancellation' }
+                }
+              }
+            }
+          }
+        },
+        responses: {
+          200: { description: 'Identical replay returns original acknowledgment.' },
+          201: { description: 'Early-stage cancellation applied.' },
+          404: { description: 'Order not found.' },
+          422: { description: 'Order already dispatched or delivered.' }
+        }
+      }
+    },
+    '/shop/return-requests': {
+      post: {
+        tags: ['Shop'],
+        summary: 'Submit one return line for review (SmartChain-compatible)',
+        requestBody: {
+          required: true,
+          content: {
+            'application/json': {
+              schema: {
+                type: 'object',
+                required: ['external_request_id', 'external_order_id', 'external_line_id', 'quantity', 'reason'],
+                properties: {
+                  external_request_id: { type: 'string', example: 'RET-DEMO' },
+                  external_order_id: { type: 'string', example: 'ORDER-DEMO' },
+                  external_line_id: { type: 'string', example: 'LINE-1' },
+                  quantity: { type: 'integer', example: 1 },
+                  reason: { type: 'string', example: 'DAMAGED' }
+                }
+              }
+            }
+          }
+        },
+        responses: {
+          200: { description: 'Identical replay returns original acknowledgment.' },
+          201: { description: 'Return request reserved for Admin review.' }
+        }
+      }
+    },
+
+    // SMARTCHAIN INTEGRATION
+    '/smartchain/logistics/status-events': {
+      post: {
+        tags: ['SmartChain'],
+        summary: 'Report a shipment status event (IN_TRANSIT or DELIVERED)',
+        description: 'Logistics callback signed via HMAC-SHA256 (`X-SmartChain-Partner`, `X-SmartChain-Timestamp`, `X-SmartChain-Signature`).',
+        parameters: [
+          { name: 'X-SmartChain-Partner', in: 'header', required: true, schema: { type: 'string' }, example: 'DEMO_LOGISTICS' },
+          { name: 'X-SmartChain-Timestamp', in: 'header', required: true, schema: { type: 'string' }, example: '1700000000' },
+          { name: 'X-SmartChain-Signature', in: 'header', required: true, schema: { type: 'string' }, example: '0000000000000000000000000000000000000000000000000000000000000000' }
+        ],
+        requestBody: {
+          required: true,
+          content: {
+            'application/json': {
+              schema: {
+                type: 'object',
+                required: ['schema_version', 'event_id', 'delivery_request_id', 'partner_delivery_request_id', 'status', 'occurred_at'],
+                properties: {
+                  schema_version: { type: 'string', example: '1.0' },
+                  event_id: { type: 'string', example: 'evt-demo-001' },
+                  delivery_request_id: { type: 'string', format: 'uuid', example: 'd290f1ee-6c54-4b01-90e6-d701748f0851' },
+                  partner_delivery_request_id: { type: 'string', example: 'LSP-DEMO-001' },
+                  status: { type: 'string', enum: ['IN_TRANSIT', 'DELIVERED'], example: 'IN_TRANSIT' },
+                  occurred_at: { type: 'string', format: 'date-time', example: '2026-01-15T09:30:00+08:00' },
+                  note: { type: 'string', nullable: true, example: 'Shipment departed the warehouse.' },
+                  proof_reference: { type: 'string', nullable: true }
+                }
+              }
+            }
+          }
+        },
+        responses: {
+          200: { description: 'Event applied, duplicate, or ignored out of order.' },
+          401: { description: 'Invalid or stale signature headers.' },
+          403: { description: 'Partner does not own the delivery request.' },
+          404: { description: 'Delivery request UUID not found.' },
+          409: { description: 'Event ID conflict or partner reference mismatch.' },
+          422: { description: 'Validation error or unknown fields.' }
+        }
+      }
+    },
+    '/smartchain/logistics/delivery-requests': {
+      get: {
+        tags: ['SmartChain'],
+        summary: 'List SmartChain delivery requests',
+        responses: { 200: { description: 'Delivery requests returned.' } }
+      },
+      post: {
+        tags: ['SmartChain'],
+        summary: 'Submit delivery request (SmartChain to Logistics)',
+        parameters: [
+          { name: 'Idempotency-Key', in: 'header', required: false, schema: { type: 'string', format: 'uuid' } },
+          { name: 'X-Correlation-ID', in: 'header', required: false, schema: { type: 'string', format: 'uuid' } }
+        ],
+        requestBody: {
+          required: true,
+          content: {
+            'application/json': {
+              schema: {
+                type: 'object',
+                required: ['delivery_request_id', 'order_reference', 'shipment_reference', 'partner_code', 'items'],
+                properties: {
+                  schema_version: { type: 'string', example: '1.0' },
+                  source_system: { type: 'string', example: 'SMARTCHAIN' },
+                  delivery_request_id: { type: 'string', format: 'uuid', example: 'd290f1ee-6c54-4b01-90e6-d701748f0851' },
+                  order_reference: { type: 'string', example: 'ORD-DEMO' },
+                  shipment_reference: { type: 'string', example: 'PKG-DEMO' },
+                  partner_code: { type: 'string', example: 'DEMO_LOGISTICS' },
+                  pickup: { type: 'object' },
+                  recipient: { type: 'object' },
+                  required_delivery_at: { type: 'string', format: 'date-time' },
+                  items: { type: 'array', items: { type: 'object' } },
+                  callback: { type: 'object' }
+                }
+              }
+            }
+          }
+        },
+        responses: {
+          200: { description: 'Replayed delivery request acknowledgment.' },
+          201: { description: 'Delivery request accepted and mirrored to Fleetops.' }
+        }
+      }
+    },
+    '/smartchain/financial/events': {
+      post: {
+        tags: ['SmartChain'],
+        summary: 'Record a pending financial event (Finance to SmartChain)',
+        requestBody: {
+          required: true,
+          content: {
+            'application/json': {
+              schema: {
+                type: 'object',
+                required: ['schema_version', 'event_id', 'event_type', 'occurred_at', 'reference', 'status'],
+                properties: {
+                  schema_version: { type: 'string', example: '1.0' },
+                  event_id: { type: 'string', example: 'FIN-EVT-DEMO' },
+                  event_type: { type: 'string', example: 'AP_PAYMENT_UPDATE' },
+                  occurred_at: { type: 'string', example: '2026-12-02T14:00:00+08:00' },
+                  reference: { type: 'string', example: 'AP-DEMO' },
+                  status: { type: 'string', example: 'PAID' },
+                  amount: { type: 'string', example: '20.00' },
+                  currency: { type: 'string', example: 'PHP' }
+                }
+              }
+            }
+          }
+        },
+        responses: {
+          200: { description: 'Identical replay returns original acknowledgment.' },
+          201: { description: 'Correlated event recorded for review.' },
+          409: { description: 'Identity reused with different data.' }
+        }
+      }
+    },
+    '/smartchain/finance/purchase-orders': {
+      post: {
+        tags: ['SmartChain'],
+        summary: 'Submit purchase order (SmartChain to Finance)',
+        parameters: [
+          { name: 'Idempotency-Key', in: 'header', required: false, schema: { type: 'string', format: 'uuid' } },
+          { name: 'X-Correlation-ID', in: 'header', required: false, schema: { type: 'string', format: 'uuid' } }
+        ],
+        requestBody: {
+          required: true,
+          content: {
+            'application/json': {
+              schema: {
+                type: 'object',
+                required: ['message_id', 'external_reference_id', 'category_type', 'total_amount', 'supplier', 'items'],
+                properties: {
+                  schema_version: { type: 'string', example: '1.0' },
+                  source_system: { type: 'string', example: 'SMARTCHAIN' },
+                  message_id: { type: 'string', format: 'uuid', example: '899e4394-655b-49ea-8074-d4687382e565' },
+                  external_reference_id: { type: 'string', example: 'PO-DEMO' },
+                  category_type: { type: 'string', example: 'INVENTORY_PURCHASE' },
+                  currency: { type: 'string', example: 'PHP' },
+                  total_amount: { type: 'string', example: '20.00' },
+                  supplier: { type: 'object' },
+                  items: { type: 'array', items: { type: 'object' } }
+                }
+              }
+            }
+          }
+        },
+        responses: {
+          200: { description: 'Existing PO intake acknowledged.' },
+          201: { description: 'New PO intake recorded.' }
+        }
+      }
+    },
+    '/smartchain/finance/request-disbursement': {
+      post: {
+        tags: ['SmartChain'],
+        summary: 'Submit AP obligation / disbursement request (SmartChain to Finance)',
+        requestBody: {
+          required: true,
+          content: {
+            'application/json': {
+              schema: {
+                type: 'object',
+                required: ['external_module', 'external_reference_id', 'category_type', 'amount', 'payee_info'],
+                properties: {
+                  external_module: { type: 'string', example: 'SUPPLY_CHAIN' },
+                  external_reference_id: { type: 'string', example: 'AP-DEMO' },
+                  category_type: { type: 'string', example: 'INVENTORY_PURCHASE' },
+                  amount: { type: 'number', example: 20 },
+                  payee_info: { type: 'object' },
+                  description: { type: 'string', example: 'QA-accepted inventory for PO-DEMO' }
+                }
+              }
+            }
+          }
+        },
+        responses: {
+          200: { description: 'Bill created with bill_number, transaction_code, and status UNPAID.' }
+        }
+      }
+    },
+    '/smartchain/finance/events': {
+      get: {
+        tags: ['SmartChain'],
+        summary: 'List recorded SmartChain financial events, purchase orders, and disbursements',
+        responses: { 200: { description: 'Finance records returned.' } }
       }
     },
 

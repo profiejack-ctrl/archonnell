@@ -13,7 +13,11 @@ export const app = express();
 // Base Middlewares
 app.use(corsMiddleware);
 app.use(cookieParser());
-app.use(express.json());
+app.use(express.json({
+    verify: (req, _res, buf) => {
+        req.rawBody = buf.toString('utf8');
+    }
+}));
 app.use(express.urlencoded({ extended: true }));
 app.use(requestLogger);
 // Health Check Endpoint (System and Database failover status)
