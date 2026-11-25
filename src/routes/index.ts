@@ -7,6 +7,7 @@ import fleetRoutes from '../modules/fleet/fleetRoutes.js';
 import shopRoutes from '../modules/shop/shopRoutes.js';
 import smartchainRoutes from '../modules/smartchain/smartchainRoutes.js';
 import pdmsRoutes from '../modules/pdms/pdmsRoutes.js';
+import esfaRoutes from '../modules/esfa/esfaRoutes.js';
 import stubsRoutes from '../modules/stubs/stubsRoutes.js';
 
 const router = Router();
@@ -19,6 +20,7 @@ router.use('/fleet', fleetRoutes);
 router.use('/shop', shopRoutes);
 router.use('/smartchain', smartchainRoutes);
 router.use('/pdms', pdmsRoutes);
+router.use('/esfa', esfaRoutes);
 router.use('/stubs', stubsRoutes);
 
 export default router;

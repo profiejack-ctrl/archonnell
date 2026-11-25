@@ -15,6 +15,7 @@ This centralized API integrates all capstone subsystems into a unified platform:
 - **Fleet**: Logistics Fleet Management, Vehicles, Drivers, Dispatches, and GPS Tracking
 - **SmartChain**: External Supply Chain Integration (Logistics Callbacks, Delivery Requests, Financial Events, Purchase Orders & Disbursements)
 - **PDMS**: Performance & Development Management System (Competencies, Goals, KPIs, Reviews, Learning, Succession, Recognition & HR2/WFM Workforce Sync)
+- **ESFA**: E-Commerce Support, Finance & Administration (Support Tickets, Knowledge Base, Centavo Payments/Refunds, Shipping Quotes/Shipments & Webhooks)
 - **Stubs**: Finance Ledger and Supply Chain Warehousing integration endpoints
     `,
         contact: {
@@ -51,6 +52,7 @@ This centralized API integrates all capstone subsystems into a unified platform:
         { name: 'Fleet', description: 'Vehicles, Drivers, Delivery Dispatches, Fuel Logs & GPS Tracking' },
         { name: 'SmartChain', description: 'SmartChain External Integration (Logistics Status Events, Delivery Requests, Finance Events, POs & Disbursements)' },
         { name: 'PDMS', description: 'Performance & Development Management System (Competencies, Goals, KPIs, Reviews, Learning, Succession, Recognition & HR2 Workforce Records)' },
+        { name: 'ESFA', description: 'E-Commerce Support, Finance & Administration (Tickets, Knowledge Base, Payments, Refunds, Shipping Quotes, Shipments & Webhooks)' },
         { name: 'Stubs', description: 'Mock Endpoints for External Capstone Subsystems (Finance & SCM)' }
     ],
     paths: {
@@ -1600,6 +1602,324 @@ This centralized API integrates all capstone subsystems into a unified platform:
                         }
                     }
                 }
+            }
+        },
+        // ESFA INTEGRATION (Support, Finance & Administration)
+        '/esfa/tickets': {
+            get: {
+                tags: ['ESFA'],
+                summary: 'List support tickets',
+                responses: {
+                    200: {
+                        description: 'Tickets returned.',
+                        content: {
+                            'application/json': {
+                                example: {
+                                    success: true,
+                                    data: [
+                                        {
+                                            reference: 'TCK-000045',
+                                            requester_type: 'customer',
+                                            requester_external_id: 'cus-1001',
+                                            order_external_id: 'ord-5001',
+                                            subject: 'Item arrived damaged',
+                                            category: 'refund_return',
+                                            priority: 'high',
+                                            status: 'open'
+                                        }
+                                    ]
+                                }
+                            }
+                        }
+                    }
+                }
+            },
+            post: {
+                tags: ['ESFA'],
+                summary: 'Create a customer support ticket',
+                parameters: [
+                    { name: 'Idempotency-Key', in: 'header', required: false, schema: { type: 'string' }, example: '6f1c2a3e-0004' }
+                ],
+                requestBody: {
+                    required: true,
+                    content: {
+                        'application/json': {
+                            example: {
+                                requester_type: 'customer',
+                                requester_external_id: 'cus-1001',
+                                order_external_id: 'ord-5001',
+                                payment_reference: 'PAY-2026-000123',
+                                subject: 'Item arrived damaged',
+                                description: 'The box was crushed.',
+                                channel: 'marketplace_app',
+                                category: 'refund_return',
+                                priority: 'high'
+                            }
+                        }
+                    }
+                },
+                responses: {
+                    201: {
+                        description: 'Ticket created.',
+                        content: {
+                            'application/json': {
+                                example: {
+                                    success: true,
+                                    ticket: { reference: 'TCK-000045', status: 'open', priority: 'high' }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        '/esfa/tickets/{reference}': {
+            get: {
+                tags: ['ESFA'],
+                summary: 'Get ticket conversation by reference',
+                parameters: [{ name: 'reference', in: 'path', required: true, schema: { type: 'string' }, example: 'TCK-000045' }],
+                responses: {
+                    200: {
+                        description: 'Ticket details and messages.',
+                        content: {
+                            'application/json': {
+                                example: {
+                                    success: true,
+                                    ticket: { reference: 'TCK-000045', subject: 'Item arrived damaged', status: 'in_progress', messages: [] }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        '/esfa/tickets/{reference}/messages': {
+            post: {
+                tags: ['ESFA'],
+                summary: 'Reply to a support ticket',
+                parameters: [{ name: 'reference', in: 'path', required: true, schema: { type: 'string' }, example: 'TCK-000045' }],
+                requestBody: {
+                    required: true,
+                    content: { 'application/json': { example: { body: 'Here is a photo of the damaged item.', author_type: 'customer' } } }
+                },
+                responses: { 201: { description: 'Message added.' } }
+            }
+        },
+        '/esfa/tickets/{reference}/csat': {
+            post: {
+                tags: ['ESFA'],
+                summary: 'Submit CSAT rating (1-5) for a ticket',
+                parameters: [{ name: 'reference', in: 'path', required: true, schema: { type: 'string' }, example: 'TCK-000045' }],
+                requestBody: {
+                    required: true,
+                    content: { 'application/json': { example: { score: 5, comment: 'Quick help.' } } }
+                },
+                responses: { 200: { description: 'CSAT recorded.' } }
+            }
+        },
+        '/esfa/kb/articles': {
+            get: {
+                tags: ['ESFA'],
+                summary: 'List published Knowledge Base articles',
+                responses: {
+                    200: {
+                        description: 'Knowledge Base articles.',
+                        content: {
+                            'application/json': {
+                                example: {
+                                    success: true,
+                                    data: [{ slug: 'return-policy', title: 'How to Request a Return or Refund', category: 'Returns' }]
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        '/esfa/payments': {
+            post: {
+                tags: ['ESFA'],
+                summary: 'Create a payment (amounts in centavos, PHP)',
+                parameters: [
+                    { name: 'Idempotency-Key', in: 'header', required: false, schema: { type: 'string' }, example: '6f1c2a3e-0001' }
+                ],
+                requestBody: {
+                    required: true,
+                    content: { 'application/json': { example: { order_external_id: 'ord-5001', method: 'gcash', amount: 158000 } } }
+                },
+                responses: {
+                    201: {
+                        description: 'Payment processed.',
+                        content: {
+                            'application/json': {
+                                example: {
+                                    success: true,
+                                    payment: { reference: 'PAY-2026-000123', status: 'captured', amount: 158000, currency: 'PHP' },
+                                    next_action: null
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        '/esfa/payments/{reference}': {
+            get: {
+                tags: ['ESFA'],
+                summary: 'Get payment by reference',
+                parameters: [{ name: 'reference', in: 'path', required: true, schema: { type: 'string' }, example: 'PAY-2026-000123' }],
+                responses: { 200: { description: 'Payment returned.' } }
+            }
+        },
+        '/esfa/refunds': {
+            post: {
+                tags: ['ESFA'],
+                summary: 'Request a refund (centavos)',
+                parameters: [
+                    { name: 'Idempotency-Key', in: 'header', required: false, schema: { type: 'string' }, example: '6f1c2a3e-0002' }
+                ],
+                requestBody: {
+                    required: true,
+                    content: {
+                        'application/json': {
+                            example: { payment_reference: 'PAY-2026-000123', amount: 75000, reason: 'damaged', notes: 'One item arrived broken.' }
+                        }
+                    }
+                },
+                responses: {
+                    201: {
+                        description: 'Refund request created.',
+                        content: {
+                            'application/json': {
+                                example: {
+                                    success: true,
+                                    refund: { reference: 'REF-2026-000012', payment_reference: 'PAY-2026-000123', amount: 75000, status: 'pending_review' }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        '/esfa/refunds/{reference}': {
+            get: {
+                tags: ['ESFA'],
+                summary: 'Get refund by reference',
+                parameters: [{ name: 'reference', in: 'path', required: true, schema: { type: 'string' }, example: 'REF-2026-000012' }],
+                responses: { 200: { description: 'Refund returned.' } }
+            }
+        },
+        '/esfa/quotes': {
+            post: {
+                tags: ['ESFA'],
+                summary: 'Calculate shipping quotes',
+                requestBody: {
+                    required: true,
+                    content: {
+                        'application/json': {
+                            example: {
+                                origin_code: '1380200000',
+                                destination_code: '1380300000',
+                                weight_grams: 1200,
+                                dimensions: { length_cm: '30', width_cm: '20', height_cm: '10' },
+                                cod_amount: 0
+                            }
+                        }
+                    }
+                },
+                responses: {
+                    200: {
+                        description: 'Sorted courier quotes.',
+                        content: {
+                            'application/json': {
+                                example: {
+                                    success: true,
+                                    quotes: [
+                                        { courier_id: 1, courier_name: 'Archon Nell Fleet Express', service_type: 'standard', fee_amount: 9000, currency: 'PHP', estimated_days: 2, recommended: true }
+                                    ]
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        '/esfa/shipments': {
+            post: {
+                tags: ['ESFA'],
+                summary: 'Book a shipment',
+                parameters: [
+                    { name: 'Idempotency-Key', in: 'header', required: false, schema: { type: 'string' }, example: '6f1c2a3e-0003' }
+                ],
+                requestBody: {
+                    required: true,
+                    content: {
+                        'application/json': {
+                            example: {
+                                order_external_id: 'ord-5001',
+                                seller_external_id: 'sel-77',
+                                courier_id: 1,
+                                service_type: 'standard',
+                                destination: { line1: '12 Sample Street', postal_code: '1740', contact_name: 'Juan Dela Cruz', contact_phone: '09170000000' },
+                                weight_grams: 1200,
+                                tracking_number: 'TRK-0001'
+                            }
+                        }
+                    }
+                },
+                responses: { 201: { description: 'Shipment booked.' } }
+            }
+        },
+        '/esfa/shipments/{reference}': {
+            get: {
+                tags: ['ESFA'],
+                summary: 'Get shipment by reference or tracking number',
+                parameters: [{ name: 'reference', in: 'path', required: true, schema: { type: 'string' }, example: 'TRK-0001' }],
+                responses: { 200: { description: 'Shipment returned.' } }
+            }
+        },
+        '/esfa/analytics/summary': {
+            get: {
+                tags: ['ESFA'],
+                summary: 'Get ESFA support, payments, refunds, and shipments summary',
+                responses: {
+                    200: {
+                        description: 'Analytics summary.',
+                        content: {
+                            'application/json': {
+                                example: {
+                                    success: true,
+                                    data: {
+                                        tickets: { total: 14, open: 3 },
+                                        payments: { total: 28, total_amount: 4520000 },
+                                        refunds: { total: 2, total_amount: 150000 },
+                                        shipments: { total: 25 }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        '/esfa/webhook-endpoints': {
+            get: {
+                tags: ['ESFA'],
+                summary: 'List registered ESFA outbound webhook endpoints',
+                responses: { 200: { description: 'Webhook endpoints returned.' } }
+            },
+            post: {
+                tags: ['ESFA'],
+                summary: 'Register an ESFA outbound webhook endpoint',
+                requestBody: {
+                    required: true,
+                    content: {
+                        'application/json': {
+                            example: { url: 'https://api.archonnellincorporated.com/api/v1/smartchain/logistics/status-events', events: ['payment.captured', 'shipment.status_changed'] }
+                        }
+                    }
+                },
+                responses: { 201: { description: 'Webhook endpoint registered.' } }
             }
         },
         // STUBS
