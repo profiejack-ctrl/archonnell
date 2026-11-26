@@ -326,3 +326,62 @@ export async function globalSearch(req, res, next) {
         return next(err);
     }
 }
+// ------------------------------------------------------------------------------
+// SHIFTS HOLIDAYS & TIMESHEETS PAYROLL EXPORT
+// ------------------------------------------------------------------------------
+export async function getHolidays(req, res) {
+    const year = new Date().getFullYear();
+    return res.json({
+        success: true,
+        data: [
+            { id: 'hol-1', date: `${year}-01-01`, name: "New Year's Day", type: 'Regular' },
+            { id: 'hol-2', date: `${year}-04-09`, name: 'Araw ng Kagitingan', type: 'Regular' },
+            { id: 'hol-3', date: `${year}-05-01`, name: 'Labor Day', type: 'Regular' },
+            { id: 'hol-4', date: `${year}-06-12`, name: 'Independence Day', type: 'Regular' },
+            { id: 'hol-5', date: `${year}-08-21`, name: 'Ninoy Aquino Day', type: 'Special' },
+            { id: 'hol-6', date: `${year}-11-01`, name: "All Saints' Day", type: 'Special' },
+            { id: 'hol-7', date: `${year}-11-30`, name: 'Bonifacio Day', type: 'Regular' },
+            { id: 'hol-8', date: `${year}-12-25`, name: 'Christmas Day', type: 'Regular' },
+            { id: 'hol-9', date: `${year}-12-30`, name: 'Rizal Day', type: 'Regular' },
+        ],
+    });
+}
+export async function exportTimesheetsForPayroll(req, res, next) {
+    try {
+        // Ensure exported_at column exists even if cold-start migration is still running
+        await query(`ALTER TABLE wfm.timesheets ADD COLUMN IF NOT EXISTS exported_at TIMESTAMP WITH TIME ZONE`).catch(() => { });
+        const updatedRes = await query(`UPDATE wfm.timesheets
+       SET exported_at = NOW(), updated_at = NOW()
+       WHERE status = 'Approved' AND exported_at IS NULL
+       RETURNING *`);
+        if (updatedRes.rows.length === 0) {
+            return res.json({ success: true, data: [] });
+        }
+        const ids = updatedRes.rows.map((r) => r.id);
+        const enriched = await query(`SELECT t.*, e.employee_no, CONCAT(e.first_name, ' ', e.last_name) AS employee_name,
+              d.name AS department_name
+       FROM wfm.timesheets t
+       JOIN hrms.employees e ON e.id = t.employee_id
+       LEFT JOIN hrms.departments d ON d.id = e.department_id
+       WHERE t.id = ANY($1::uuid[])
+       ORDER BY e.last_name ASC`, [ids]);
+        const payload = enriched.rows.map((t) => ({
+            ...t,
+            id: t.id,
+            employeeId: t.employee_no || t.employee_id,
+            employeeName: t.employee_name,
+            department: t.department_name || '',
+            periodStart: t.period_from ? String(t.period_from).slice(0, 10) : '',
+            periodEnd: t.period_to ? String(t.period_to).slice(0, 10) : '',
+            regularHours: Number(t.regular_hours || 0),
+            overtimeHours: Number(t.overtime_hours || 0),
+            totalHours: Number(t.total_hours || 0),
+            status: t.status,
+            exportedAt: t.exported_at,
+        }));
+        return res.json({ success: true, data: payload });
+    }
+    catch (err) {
+        return next(err);
+    }
+}

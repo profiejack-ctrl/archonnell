@@ -54,6 +54,8 @@ export async function ensureSchema() {
       ALTER TABLE auth_core.users ADD COLUMN IF NOT EXISTS username VARCHAR(100);
       UPDATE auth_core.users SET username = LOWER(email) WHERE username IS NULL;
 
+      ALTER TABLE wfm.timesheets ADD COLUMN IF NOT EXISTS exported_at TIMESTAMP WITH TIME ZONE;
+
       ALTER TABLE shop.products ADD COLUMN IF NOT EXISTS brand VARCHAR(150);
       ALTER TABLE shop.products ADD COLUMN IF NOT EXISTS unit VARCHAR(20) DEFAULT 'PCS';
       ALTER TABLE shop.products ADD COLUMN IF NOT EXISTS currency VARCHAR(10) DEFAULT 'PHP';
