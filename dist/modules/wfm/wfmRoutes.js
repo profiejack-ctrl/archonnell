@@ -114,7 +114,7 @@ router.delete('/overtime/:id', (_req, res) => res.json({ success: true }));
 router.get('/timesheets', wfmController.getTimesheets);
 router.get('/timesheets/employee/:employeeId', async (req, res, next) => {
     try {
-        const data = await wfmService.getTimesheets({ employeeId: req.params.employeeId });
+        const data = await wfmService.getTimesheets(undefined, undefined, req.params.employeeId);
         res.json({ success: true, data });
     }
     catch (e) {
@@ -127,7 +127,7 @@ router.patch('/timesheets/:id/status', authorize(['superadmin', 'hr_admin']), wf
 router.get('/leaves', wfmController.getLeaves);
 router.get('/leaves/employee/:employeeId', async (req, res, next) => {
     try {
-        const data = await wfmService.getLeaveRequests({ employeeId: req.params.employeeId });
+        const data = await wfmService.getAllLeaves(req.params.employeeId);
         res.json({ success: true, data });
     }
     catch (e) {

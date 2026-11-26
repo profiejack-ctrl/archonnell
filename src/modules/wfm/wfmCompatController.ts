@@ -61,7 +61,7 @@ export async function getAiHealthScore(req: Request, res: Response, next: NextFu
 
 export async function getAiInsights(req: Request, res: Response, next: NextFunction) {
   try {
-    const alerts = await wfmService.getIntelligenceAlerts();
+    const alerts = await wfmService.getWorkforceAlerts();
     return res.json({ success: true, data: { insights: alerts, alerts } });
   } catch (err) {
     return next(err);
