@@ -10,6 +10,15 @@ import apiRouter from './routes/index.js';
 import { authenticate } from './middleware/authenticate.js';
 import { exportEmployees } from './modules/hrms/hrmsController.js';
 export const app = express();
+app.set('etag', false);
+// Prevent cross-subdomain CORS cache poisoning (304 Not Modified with another origin's ACAO header)
+app.use('/api', (req, res, next) => {
+    res.setHeader('Vary', 'Origin');
+    res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
+    res.setHeader('Pragma', 'no-cache');
+    res.setHeader('Expires', '0');
+    next();
+});
 // Base Middlewares
 app.use(corsMiddleware);
 app.use(cookieParser());
