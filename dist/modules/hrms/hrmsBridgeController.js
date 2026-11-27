@@ -7,6 +7,106 @@ import * as wfmService from '../wfm/wfmService.js';
 import * as emailService from '../../services/emailService.js';
 import { getClient, query } from '../../db/connection.js';
 function bridgeIsoDate(date) { return date.toISOString().slice(0, 10); }
+let hrmsBridgeSchemaReady = null;
+/**
+ * Ensures HRMS bridge tables and columns exist in production databases
+ * that have not yet run `db:migrate` after schema additions.
+ */
+async function ensureHrmsBridgeSchema() {
+    if (!hrmsBridgeSchemaReady) {
+        hrmsBridgeSchemaReady = query(`
+      CREATE SCHEMA IF NOT EXISTS hrms;
+      ALTER TABLE auth_core.users ADD COLUMN IF NOT EXISTS username VARCHAR(100);
+      ALTER TABLE hrms.employees ADD COLUMN IF NOT EXISTS gender VARCHAR(50);
+      ALTER TABLE hrms.employees ADD COLUMN IF NOT EXISTS contract_type VARCHAR(100) DEFAULT 'Full-Time';
+      ALTER TABLE hrms.job_postings ADD COLUMN IF NOT EXISTS metadata JSONB NOT NULL DEFAULT '{}';
+      CREATE TABLE IF NOT EXISTS hrms.vacancy_requests (
+          id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+          request_no VARCHAR(50) UNIQUE NOT NULL,
+          department_id UUID NOT NULL REFERENCES hrms.departments(id),
+          position_id UUID NOT NULL REFERENCES hrms.positions(id),
+          vacancies INT NOT NULL CHECK (vacancies > 0),
+          employment_type VARCHAR(100) NOT NULL,
+          justification TEXT NOT NULL,
+          required_skills TEXT NOT NULL DEFAULT '',
+          qualifications TEXT NOT NULL DEFAULT '',
+          requested_date DATE NOT NULL DEFAULT CURRENT_DATE,
+          notes TEXT NOT NULL DEFAULT '',
+          status VARCHAR(50) NOT NULL DEFAULT 'Pending',
+          requested_by UUID REFERENCES auth_core.users(id) ON DELETE SET NULL,
+          reviewed_by UUID REFERENCES auth_core.users(id) ON DELETE SET NULL,
+          reviewed_at TIMESTAMP WITH TIME ZONE,
+          rejection_reason TEXT,
+          cancelled_at TIMESTAMP WITH TIME ZONE,
+          created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW()
+      );
+      CREATE TABLE IF NOT EXISTS hrms.announcements (
+          id BIGSERIAL PRIMARY KEY,
+          title VARCHAR(255) NOT NULL,
+          summary TEXT,
+          body TEXT NOT NULL,
+          cover_image TEXT,
+          published_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
+          end_at TIMESTAMP WITH TIME ZONE,
+          status VARCHAR(30) NOT NULL DEFAULT 'Draft',
+          show_on_dashboard BOOLEAN NOT NULL DEFAULT TRUE,
+          scope_all BOOLEAN NOT NULL DEFAULT TRUE,
+          scope_departments TEXT[] NOT NULL DEFAULT '{}',
+          withdrawn_at TIMESTAMP WITH TIME ZONE,
+          created_by UUID REFERENCES auth_core.users(id) ON DELETE SET NULL,
+          updated_by UUID REFERENCES auth_core.users(id) ON DELETE SET NULL,
+          created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
+          updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW()
+      );
+      CREATE TABLE IF NOT EXISTS hrms.applicant_rejections (
+          id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+          applicant_id UUID NOT NULL REFERENCES hrms.applicants(id) ON DELETE CASCADE,
+          stage VARCHAR(50) NOT NULL,
+          category VARCHAR(255),
+          reason TEXT NOT NULL,
+          rejected_by VARCHAR(255),
+          future_invited BOOLEAN NOT NULL DEFAULT FALSE,
+          created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW()
+      );
+      CREATE TABLE IF NOT EXISTS hrms.applicant_interviews (
+          id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+          applicant_id UUID NOT NULL REFERENCES hrms.applicants(id) ON DELETE CASCADE,
+          round VARCHAR(50) NOT NULL,
+          scheduled_at TIMESTAMP WITH TIME ZONE NOT NULL,
+          interview_type VARCHAR(100),
+          location TEXT,
+          interviewer_name VARCHAR(255),
+          interviewer_id VARCHAR(255),
+          status VARCHAR(50) NOT NULL DEFAULT 'Scheduled',
+          confirmation_deadline TIMESTAMP WITH TIME ZONE,
+          created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW()
+      );
+      CREATE TABLE IF NOT EXISTS hrms.applicant_events (
+          id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+          applicant_id UUID NOT NULL REFERENCES hrms.applicants(id) ON DELETE CASCADE,
+          action VARCHAR(100) NOT NULL,
+          description TEXT NOT NULL,
+          username VARCHAR(255),
+          created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW()
+      );
+      CREATE TABLE IF NOT EXISTS hrms.onboarding_records (
+          id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+          employee_id UUID NOT NULL UNIQUE REFERENCES hrms.employees(id) ON DELETE CASCADE,
+          contract_type VARCHAR(100) NOT NULL DEFAULT 'Probationary',
+          status VARCHAR(100) NOT NULL DEFAULT 'In Progress',
+          progress NUMERIC(5, 2) NOT NULL DEFAULT 0,
+          created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
+          updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW()
+      );
+    `)
+            .then(() => undefined)
+            .catch((err) => {
+            hrmsBridgeSchemaReady = null;
+            console.warn('[HRMS Bridge] Auto-schema check failed:', err?.message || err);
+        });
+    }
+    return hrmsBridgeSchemaReady;
+}
 async function findEmployeeForUser(user) {
     if (!user?.id)
         return null;
@@ -246,6 +346,7 @@ export async function handleBridgeAction(req, res, next) {
         }
         const action = (req.query.action || body.action || 'dashboard');
         const currentUser = req.user;
+        await ensureHrmsBridgeSchema();
         switch (action) {
             // ------------------------------------------------------------------------
             // 1. AUTHENTICATION & SESSION
@@ -1281,7 +1382,11 @@ export async function handleBridgeAction(req, res, next) {
                  ) SELECT n.legacy_id AS id, e.employee_no, concat_ws(' ', e.first_name, e.last_name) AS name,
                           n.status, n.progress
                    FROM numbered n JOIN hrms.employees e ON e.id = n.employee_id
-                   ORDER BY n.created_at DESC LIMIT 5`)
+                   ORDER BY n.created_at DESC LIMIT 5`).catch((err) => {
+                        if (err?.code === '42P01')
+                            return { rows: [] };
+                        throw err;
+                    })
                 ]);
                 return res.json({
                     success: true,
