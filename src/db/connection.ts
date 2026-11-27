@@ -64,6 +64,12 @@ export async function ensureSchema() {
 
       ALTER TABLE wfm.timesheets ADD COLUMN IF NOT EXISTS exported_at TIMESTAMP WITH TIME ZONE;
 
+      CREATE TABLE IF NOT EXISTS wfm.settings (
+        key VARCHAR(100) PRIMARY KEY,
+        value JSONB NOT NULL DEFAULT '{}',
+        updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+      );
+
       ALTER TABLE shop.products ADD COLUMN IF NOT EXISTS brand VARCHAR(150);
       ALTER TABLE shop.products ADD COLUMN IF NOT EXISTS unit VARCHAR(20) DEFAULT 'PCS';
       ALTER TABLE shop.products ADD COLUMN IF NOT EXISTS currency VARCHAR(10) DEFAULT 'PHP';

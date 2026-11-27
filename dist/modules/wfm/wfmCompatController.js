@@ -189,13 +189,6 @@ const DEFAULT_KIOSK_CONFIG = {
 };
 async function readKioskConfig() {
     try {
-        await query(`
-      CREATE TABLE IF NOT EXISTS wfm.settings (
-        key VARCHAR(100) PRIMARY KEY,
-        value JSONB NOT NULL DEFAULT '{}',
-        updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
-      )
-    `);
         const res = await query(`SELECT value FROM wfm.settings WHERE key = 'kiosk' LIMIT 1`);
         if (res.rows[0]?.value) {
             return { ...DEFAULT_KIOSK_CONFIG, ...res.rows[0].value };
@@ -264,37 +257,32 @@ export async function verifyKioskPin(req, res) {
         expiresAt,
     });
 }
-export async function getKioskOverview(req, res, next) {
-    try {
-        const today = new Date().toISOString().slice(0, 10);
-        const [cfg, empRes, attRes] = await Promise.all([
-            readKioskConfig(),
-            query(`SELECT COUNT(*)::int AS total FROM hrms.employees WHERE employment_status != 'Terminated'`),
-            query(`SELECT COUNT(*) FILTER (WHERE time_in IS NOT NULL)::int AS clocked_in,
-                    COUNT(*) FILTER (WHERE time_out IS NOT NULL)::int AS clocked_out
-             FROM wfm.attendance_logs WHERE date = $1`, [today]),
-        ]);
-        const activeEmployees = empRes.rows[0]?.total || 0;
-        return res.json({
-            success: true,
-            data: {
-                totalEmployees: activeEmployees,
-                clockedInToday: attRes.rows[0]?.clocked_in || 0,
-                clockedOutToday: attRes.rows[0]?.clocked_out || 0,
-                waiting: [],
-                failedAttempts: 0,
-                readiness: {
-                    pinSet: Boolean(cfg.hasPin || cfg.pinConfigured),
-                    kioskActive: Boolean(cfg.active),
-                    activeEmployees,
-                    withoutFace: activeEmployees,
-                },
+export async function getKioskOverview(req, res, _next) {
+    const today = new Date().toISOString().slice(0, 10);
+    const [cfg, empRes, attRes] = await Promise.all([
+        readKioskConfig().catch(() => ({ ...DEFAULT_KIOSK_CONFIG })),
+        query(`SELECT COUNT(*)::int AS total FROM hrms.employees WHERE employment_status != 'Terminated'`).catch(() => ({ rows: [{ total: 0 }] })),
+        query(`SELECT COUNT(*) FILTER (WHERE time_in IS NOT NULL)::int AS clocked_in,
+                  COUNT(*) FILTER (WHERE time_out IS NOT NULL)::int AS clocked_out
+           FROM wfm.attendance_logs WHERE date = $1`, [today]).catch(() => ({ rows: [{ clocked_in: 0, clocked_out: 0 }] })),
+    ]);
+    const activeEmployees = empRes.rows[0]?.total || 0;
+    return res.json({
+        success: true,
+        data: {
+            totalEmployees: activeEmployees,
+            clockedInToday: attRes.rows[0]?.clocked_in || 0,
+            clockedOutToday: attRes.rows[0]?.clocked_out || 0,
+            waiting: [],
+            failedAttempts: 0,
+            readiness: {
+                pinSet: Boolean(cfg.hasPin || cfg.pinConfigured),
+                kioskActive: Boolean(cfg.active),
+                activeEmployees,
+                withoutFace: activeEmployees,
             },
-        });
-    }
-    catch (err) {
-        return next(err);
-    }
+        },
+    });
 }
 export function normalizeKioskEmployee(e) {
     if (!e)
