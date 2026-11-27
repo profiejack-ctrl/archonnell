@@ -112,7 +112,7 @@ export async function getEmployeeById(id: string) {
      LEFT JOIN hrms.departments d ON d.id = e.department_id
      LEFT JOIN hrms.positions p ON p.id = e.position_id
      LEFT JOIN auth_core.users u ON u.id = e.user_id
-     WHERE e.id = $1 OR e.employee_no = $1`,
+     WHERE e.id::text = $1 OR UPPER(e.employee_no) = UPPER($1) OR UPPER(REPLACE(e.employee_no, '-', '')) = UPPER(REPLACE($1, '-', ''))`,
     [id]
   );
   if (result.rows.length === 0) {
