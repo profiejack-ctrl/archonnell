@@ -15,7 +15,7 @@ router.get('/kiosk/employees', wfmCompat.getKioskEmployees);
 router.get('/kiosk/employees/:employeeId', async (req, res, next) => {
     try {
         const data = await hrmsService.getEmployeeById(req.params.employeeId);
-        res.json({ success: true, data });
+        res.json({ success: true, data: wfmCompat.normalizeKioskEmployee(data) });
     }
     catch (e) {
         next(e);

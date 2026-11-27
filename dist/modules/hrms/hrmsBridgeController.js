@@ -8,10 +8,6 @@ import * as emailService from '../../services/emailService.js';
 import { getClient, query } from '../../db/connection.js';
 function bridgeIsoDate(date) { return date.toISOString().slice(0, 10); }
 let hrmsBridgeSchemaReady = null;
-/**
- * Ensures HRMS bridge tables and columns exist in production databases
- * that have not yet run `db:migrate` after schema additions.
- */
 async function ensureHrmsBridgeSchema() {
     if (!hrmsBridgeSchemaReady) {
         hrmsBridgeSchemaReady = query(`

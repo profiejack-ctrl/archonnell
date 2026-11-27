@@ -296,10 +296,29 @@ export async function getKioskOverview(req, res, next) {
         return next(err);
     }
 }
+export function normalizeKioskEmployee(e) {
+    if (!e)
+        return e;
+    return {
+        ...e,
+        employeeId: e.employee_no || e.id,
+        employeeNo: e.employee_no || e.id,
+        firstName: e.firstName || e.first_name || '',
+        lastName: e.lastName || e.last_name || '',
+        name: `${e.first_name || ''} ${e.last_name || ''}`.trim(),
+        department: e.department || e.department_name || '',
+        position: e.position || e.position_title || '',
+        avatar: e.avatar || e.avatar_url || '',
+        status: e.employment_status === 'Terminated' ? 'Terminated' : 'Active',
+        faceRegistered: Boolean(e.face_registered ?? e.faceRegistered ?? e.face_descriptor),
+        faceDescriptor: e.face_descriptor || e.faceDescriptor || null,
+        faceImage: e.face_image || e.faceImage || null,
+    };
+}
 export async function getKioskEmployees(req, res, next) {
     try {
         const data = await hrmsService.getAllEmployees();
-        return res.json({ success: true, data });
+        return res.json({ success: true, data: data.map(normalizeKioskEmployee) });
     }
     catch (err) {
         return next(err);
