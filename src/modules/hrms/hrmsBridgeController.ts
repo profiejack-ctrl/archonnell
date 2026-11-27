@@ -12,10 +12,6 @@ function bridgeIsoDate(date: Date) { return date.toISOString().slice(0, 10); }
 
 let hrmsBridgeSchemaReady: Promise<void> | null = null;
 
-/**
- * Ensures HRMS bridge tables and columns exist in production databases
- * that have not yet run `db:migrate` after schema additions.
- */
 async function ensureHrmsBridgeSchema(): Promise<void> {
   if (!hrmsBridgeSchemaReady) {
     hrmsBridgeSchemaReady = query(`
