@@ -172,49 +172,123 @@ export async function getTopPerformers(req, res, next) {
     }
 }
 // ------------------------------------------------------------------------------
-// KIOSK ENDPOINTS
+// KIOSK ENDPOINTS (Persisted in wfm.settings for serverless consistency)
 // ------------------------------------------------------------------------------
-let kioskConfigState = {
+const DEFAULT_KIOSK_CONFIG = {
+    location: 'Main Entrance',
+    deviceName: 'Front Door Kiosk',
+    timezone: 'Asia/Manila',
+    active: false,
+    enabledAt: null,
+    hasPin: false,
     kioskEnabled: true,
-    pinConfigured: true,
+    pinConfigured: false,
     requireFaceVerification: false,
     gracePeriodMinutes: 15,
-    timezone: 'Asia/Manila',
     pin: '1234',
 };
+async function readKioskConfig() {
+    try {
+        await query(`
+      CREATE TABLE IF NOT EXISTS wfm.settings (
+        key VARCHAR(100) PRIMARY KEY,
+        value JSONB NOT NULL DEFAULT '{}',
+        updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+      )
+    `);
+        const res = await query(`SELECT value FROM wfm.settings WHERE key = 'kiosk' LIMIT 1`);
+        if (res.rows[0]?.value) {
+            return { ...DEFAULT_KIOSK_CONFIG, ...res.rows[0].value };
+        }
+    }
+    catch (err) {
+        console.warn('[Kiosk Settings] Read fallback:', err.message);
+    }
+    return { ...DEFAULT_KIOSK_CONFIG };
+}
+async function writeKioskConfig(patch) {
+    const current = await readKioskConfig();
+    const next = { ...current, ...patch };
+    try {
+        await query(`INSERT INTO wfm.settings (key, value, updated_at)
+       VALUES ('kiosk', $1::jsonb, NOW())
+       ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = NOW()`, [JSON.stringify(next)]);
+    }
+    catch (err) {
+        console.warn('[Kiosk Settings] Write fallback:', err.message);
+    }
+    return next;
+}
 export async function getKioskConfig(req, res) {
-    const { pin: _pin, ...publicConfig } = kioskConfigState;
+    const cfg = await readKioskConfig();
+    const { pin: _pin, ...publicConfig } = cfg;
     return res.json({
         success: true,
         data: { ...publicConfig, serverTime: new Date().toISOString() },
     });
 }
 export async function updateKioskConfig(req, res) {
-    kioskConfigState = { ...kioskConfigState, ...req.body };
-    const { pin: _pin, ...publicConfig } = kioskConfigState;
+    const next = await writeKioskConfig(req.body || {});
+    const { pin: _pin, ...publicConfig } = next;
     return res.json({ success: true, data: publicConfig });
 }
+export async function setKioskPin(req, res) {
+    const pin = String(req.body?.pin || '').trim();
+    if (!pin || pin.length < 4) {
+        return res.status(400).json({ success: false, message: 'PIN must be at least 4 digits.' });
+    }
+    const next = await writeKioskConfig({
+        pin,
+        hasPin: true,
+        pinConfigured: true,
+    });
+    const { pin: _pin, ...publicConfig } = next;
+    return res.json({ success: true, data: publicConfig, message: 'Kiosk PIN updated.' });
+}
 export async function verifyKioskPin(req, res) {
-    const ok = !req.body?.pin || String(req.body.pin) === kioskConfigState.pin || String(req.body.pin) === '1234';
-    if (!ok)
-        return res.status(401).json({ success: false, message: 'Invalid Kiosk PIN.' });
-    return res.json({ success: true, valid: true });
+    const cfg = await readKioskConfig();
+    const incoming = String(req.body?.pin || '').trim();
+    const ok = Boolean(incoming) && (incoming === String(cfg.pin || '1234') || (!cfg.hasPin && incoming === '1234'));
+    if (!ok) {
+        return res.status(401).json({ success: false, ok: false, message: 'Incorrect access PIN.' });
+    }
+    const midnight = new Date();
+    midnight.setHours(23, 59, 59, 999);
+    const expiresAt = Math.floor(midnight.getTime() / 1000);
+    const token = `kiosk_${Buffer.from(`${Date.now()}:${expiresAt}`).toString('base64')}`;
+    return res.json({
+        success: true,
+        ok: true,
+        valid: true,
+        token,
+        expiresAt,
+    });
 }
 export async function getKioskOverview(req, res, next) {
     try {
         const today = new Date().toISOString().slice(0, 10);
-        const [empRes, attRes] = await Promise.all([
+        const [cfg, empRes, attRes] = await Promise.all([
+            readKioskConfig(),
             query(`SELECT COUNT(*)::int AS total FROM hrms.employees WHERE employment_status != 'Terminated'`),
             query(`SELECT COUNT(*) FILTER (WHERE time_in IS NOT NULL)::int AS clocked_in,
                     COUNT(*) FILTER (WHERE time_out IS NOT NULL)::int AS clocked_out
              FROM wfm.attendance_logs WHERE date = $1`, [today]),
         ]);
+        const activeEmployees = empRes.rows[0]?.total || 0;
         return res.json({
             success: true,
             data: {
-                totalEmployees: empRes.rows[0]?.total || 0,
+                totalEmployees: activeEmployees,
                 clockedInToday: attRes.rows[0]?.clocked_in || 0,
                 clockedOutToday: attRes.rows[0]?.clocked_out || 0,
+                waiting: [],
+                failedAttempts: 0,
+                readiness: {
+                    pinSet: Boolean(cfg.hasPin || cfg.pinConfigured),
+                    kioskActive: Boolean(cfg.active),
+                    activeEmployees,
+                    withoutFace: activeEmployees,
+                },
             },
         });
     }

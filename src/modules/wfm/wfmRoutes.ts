@@ -47,7 +47,7 @@ router.get('/system/db-health', wfmCompat.getDbHealth);
 router.post('/kiosk/config', wfmCompat.updateKioskConfig);
 router.get('/kiosk/logs', wfmController.getAttendance);
 router.get('/kiosk/overview', wfmCompat.getKioskOverview);
-router.post('/kiosk/pin', (_req, res) => res.json({ success: true, message: 'Kiosk PIN updated.' }));
+router.post('/kiosk/pin', wfmCompat.setKioskPin);
 router.post('/kiosk/reset', (_req, res) => res.json({ success: true, message: 'Kiosk reset.' }));
 
 // Shifts & Schedules
